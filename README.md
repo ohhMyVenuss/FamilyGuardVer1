@@ -1,49 +1,55 @@
-# 🛡️ FamilyGuard - Ứng Dụng Quản Lý Truy Cập Internet Của Trẻ Dành Cho Cha Mẹ
+# 🛡FamilyGuard - Ứng Dụng Quản Lý Truy Cập Internet Của Trẻ Dành Cho Cha Mẹ
 
 > **Đồ án môn học:** Lập Trình Mạng (LT Mạng)  
 > **Phiên bản:** DesktopVer1 (JavaFX + Maven)
 
 ---
 
-## 📌 1. Giới thiệu tổng quan
+## 1. Giới thiệu tổng quan
 Ứng dụng **FamilyGuard** được thiết kế nhằm cung cấp cho cha mẹ một bảng điều khiển (Dashboard) trực quan, hiện đại và mạnh mẽ để giám sát, phân luồng và quản lý thời lượng cũng như nội dung truy cập Internet của con cái trong gia đình.
 
 ---
 
-## 🏗️ 2. Kiến trúc mã nguồn đã được chuẩn hóa (MVC + Service Layer)
+## 🏗2. Kiến trúc mã nguồn đã được chuẩn hóa (MVC + Service Layer)
 
 Source code đã được tái cấu trúc và chuẩn hóa hoàn toàn theo mô hình phân lớp rõ ràng:
 
 ```text
 src/main/
 ├── java/
-│   ├── module-info.java                          # Khai báo Java Platform Module System (JPMS)
+│   ├── module-info.java                          # Khai báo Java Platform Module System (JPMS, java.sql)
 │   └── org/example/desktopver1/
 │       ├── ParentalControlApp.java               # Điểm khởi chạy chính (Application Entry Point)
 │       ├── controller/
 │       │   └── MainController.java               # Điều phối chuyển màn hình, Top Header, Toast Notification
+│       ├── database/                             # Tầng lưu trữ cơ sở dữ liệu SQLite
+│       │   └── DatabaseManager.java              # Quản lý SQLite JDBC, Schema DDL, Seed dữ liệu giả & CRUD
 │       ├── model/                                # Các đối tượng dữ liệu (Data Models)
 │       │   ├── Device.java                       # Thiết bị con cái (Tên, IP, MAC, Trạng thái, Bị chặn?)
 │       │   ├── AccessLog.java                    # Nhật ký truy vấn mạng (Thời gian, Thiết bị, URL, Phân loại, Hành động)
 │       │   ├── CategoryRule.java                 # Quy tắc bộ lọc danh mục (Tên, Biểu tượng, Đã chặn, Thống kê)
 │       │   └── TimeSchedule.java                 # Cấu hình giới hạn thời gian (Hạn mức ngày thường/cuối tuần, Khung giờ ngủ)
 │       ├── service/
-│       │   └── DataService.java                  # Tầng nghiệp vụ & Quản lý dữ liệu trung tâm (Data Store & Actions)
+│       │   └── DataService.java                  # Tầng nghiệp vụ kết nối SQLite & State Store giao diện
 │       └── view/                                 # Các màn hình giao diện (View Components)
 │           ├── DashboardView.java                # Màn hình 1: Tổng quan trạng thái, 4 thẻ KPI, PieChart, Sự kiện gần nhất
 │           ├── TimeManagementView.java           # Màn hình 2: Giới hạn giờ chơi, Giờ giới nghiêm ban đêm, Tiến độ các máy
 │           ├── ContentFilterView.java            # Màn hình 3: Bộ lọc danh mục nhạy cảm, Blacklist / Whitelist tên miền
 │           ├── DeviceManagerView.java            # Màn hình 4: Danh sách thiết bị trong LAN, Ngắt/Mở mạng từng máy
 │           └── AccessLogsView.java               # Màn hình 5: Bảng nhật ký TableView chi tiết, Tìm kiếm, Lọc, Xuất CSV
-└── resources/
-    └── org/example/desktopver1/
-        └── css/
-            └── style.css                         # Bộ CSS giao diện hiện đại (Flat UI, Tailwind Slate Palette)
+├── resources/
+│   └── org/example/desktopver1/
+│       └── css/
+│           └── style.css                         # Bộ CSS giao diện hiện đại (Flat UI, Tailwind Slate Palette)
+└── test/
+    └── java/org/example/desktopver1/database/
+        ├── DatabaseManagerTest.java              # Unit tests kiểm tra Schema, CRUD & Seeding SQLite
+        └── DataServiceDatabaseTest.java          # Integration tests kiểm tra đồng bộ DataService với SQLite
 ```
 
 ---
 
-## ✨ 3. Các tính năng & Tối ưu hóa giao diện (UI/UX)
+##  3. Các tính năng & Tối ưu hóa giao diện (UI/UX)
 
 1. **Tổng quan (Dashboard & Cảnh báo)**:
    - **Banner trạng thái bảo vệ**: Nhận biết ngay hệ thống đang "Đang bảo vệ" hay "Tạm dừng".
@@ -81,16 +87,7 @@ src/main/
 
 ---
 
-## 🌐 4. Hướng dẫn mở rộng cho môn "Lập Trình Mạng" (Socket / Server integration)
-
-Tầng `DataService.java` đã được chú thích chi tiết các điểm neo để kết nối mạng thực tế:
-- **Cơ chế 1: Client - Server Socket**: Tạo một background thread kết nối Socket TCP/UDP đến máy trạm của con hoặc Router/Proxy. Khi phụ huynh bấm "Ngắt kết nối Internet", `DataService` gửi bản tin JSON điều khiển `{"command": "BLOCK", "mac": "..."}`.
-- **Cơ chế 2: DNS Sinkhole / Proxy Server**: Tích hợp một local DNS Server hoặc HTTP Proxy; khi con cái truy vấn tên miền nằm trong Blacklist, Server trả về IP của trang cảnh báo "Trang web này đã bị phụ huynh chặn".
-- **Cơ chế 3: Đồng bộ Log thời gian thực**: Trạm con (Agent) gửi gói tin UDP/TCP chứa thông tin URL vừa truy cập về máy cha mẹ để `dataService.addAccessLog(...)` cập nhật tức thì lên bảng giao diện.
-
----
-
-## 🚀 5. Hướng dẫn chạy ứng dụng
+## Hướng dẫn chạy ứng dụng
 
 ### Cách 1: Click chạy nhanh trên Windows
 Chỉ cần nhấp đúp vào tệp tin **`run.bat`** ở thư mục gốc của dự án.
@@ -107,3 +104,10 @@ $env:JAVA_HOME = "C:\Program Files\Java\jdk-24"
 .\mvnw.cmd clean package -DskipTests
 ```
 Tệp JAR sau khi đóng gói sẽ nằm tại `target/DesktopVer1-1.0-SNAPSHOT.jar`.
+
+### Cách 4: Chạy toàn bộ Test tự động với dữ liệu giả SQLite (JUnit 5)
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-24"
+.\mvnw.cmd test
+```
+Hệ thống sẽ chạy 13 ca kiểm thử tự động trên `DatabaseManagerTest` và `DataServiceDatabaseTest`.

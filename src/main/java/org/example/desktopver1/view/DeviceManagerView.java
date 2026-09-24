@@ -208,7 +208,7 @@ public class DeviceManagerView extends ScrollPane {
                         false,
                         "0h 05m"
                 );
-                dataService.getDevices().add(newDev);
+                dataService.addDevice(newDev);
                 refreshDevicesList();
                 toastNotifier.accept("Đã thêm thiết bị mới: " + newDev.getName());
             }
