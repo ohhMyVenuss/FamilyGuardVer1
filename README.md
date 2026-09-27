@@ -105,9 +105,37 @@ $env:JAVA_HOME = "C:\Program Files\Java\jdk-24"
 ```
 Tệp JAR sau khi đóng gói sẽ nằm tại `target/DesktopVer1-1.0-SNAPSHOT.jar`.
 
-### Cách 4: Chạy toàn bộ Test tự động với dữ liệu giả SQLite (JUnit 5)
+### Cách 4: Chạy toàn bộ Test tự động với dữ liệu giả SQLite & Mock VPS (JUnit 5)
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Java\jdk-24"
 .\mvnw.cmd test
 ```
-Hệ thống sẽ chạy 13 ca kiểm thử tự động trên `DatabaseManagerTest` và `DataServiceDatabaseTest`.
+Hệ thống sẽ chạy toàn bộ 17 ca kiểm thử tự động trên `DatabaseManagerTest`, `DataServiceDatabaseTest`, `JsonUtilTest` và `VpsClientServiceTest`.
+
+---
+
+## 🌐 4. Module Lập Trình Mạng: Luồng Ngầm & Giao Thức Kết Nối VPS
+
+Hệ thống đã triển khai luồng ngầm mạng đạt chuẩn đề tài **Lập Trình Mạng**:
+- **Địa chỉ VPS đích**: `103.74.101.176:9000`
+- **Mật khẩu xác thực**: `AZvpsd6eb!5l@66`
+- **Kiến trúc luồng ngầm (Background Thread)**:
+  - `Connection Maintainer Thread` (Daemon): Khởi chạy khi mở app, tự động bắt tay TCP Socket tới VPS. Khi mạng chập chờn hoặc máy chủ khởi động lại, luồng tự động thử kết nối lại định kỳ mỗi 5 giây mà không làm đơ giao diện JavaFX.
+  - `Message Sender Thread`: Quản lý `LinkedBlockingQueue` an toàn đa luồng. Khi phụ huynh thao tác trên UI, lệnh JSON được đẩy vào hàng đợi và truyền tới VPS ngay lập tức.
+  - `Gói tin bắt tay xác thực (AUTH)`: Khi vừa kết nối Socket, app tự động gửi gói tin xác thực bí mật chứa mật khẩu.
+  - `Live Status Badge`: Hiển thị trạng thái kết nối trực tiếp trên thanh Header (🔴 Mất kết nối VPS / 🟡 Đang kết nối / 🟢 Đã xác thực).
+
+### Các lệnh JSON phát sinh từ thao tác của Phụ Huynh:
+1. **Khóa mạng khẩn cấp**: `{"action": "EMERGENCY_PAUSE", "target": "ALL_DEVICES", "paused": true, "timestamp": "..."}`
+2. **Bật/Tắt bảo vệ**: `{"action": "TOGGLE_PROTECTION", "enabled": true, "timestamp": "..."}`
+3. **Cắt mạng thiết bị con**: `{"action": "DEVICE_BLOCK", "deviceId": "DEV-01", "mac": "...", "blocked": true, "timestamp": "..."}`
+4. **Cập nhật Blacklist**: `{"action": "BLACKLIST_UPDATE", "domain": "facebook.com", "operation": "ADD", "timestamp": "..."}`
+5. **Cập nhật Whitelist**: `{"action": "WHITELIST_UPDATE", "domain": "hocmai.vn", "operation": "ADD", "timestamp": "..."}`
+6. **Chặn danh mục**: `{"action": "CATEGORY_RULE_UPDATE", "ruleId": "CAT-01", "blocked": true, "timestamp": "..."}`
+7. **Cấu hình hạn mức giờ & giờ giới nghiêm**: `{"action": "TIME_LIMIT_UPDATE", ...}`, `{"action": "CURFEW_UPDATE", ...}`
+
+### Khởi chạy Server lắng nghe trên VPS (Python Daemon):
+```bash
+python vps_server.py --port 9000
+```
+

@@ -9,6 +9,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.layout.*;
 import javafx.util.Duration;
+import org.example.desktopver1.network.VpsClientService;
 import org.example.desktopver1.service.DataService;
 import org.example.desktopver1.view.*;
 
@@ -186,6 +187,33 @@ public class MainController {
         HBox rightBox = new HBox(14);
         rightBox.setAlignment(Pos.CENTER_RIGHT);
 
+        // Huy hiệu trạng thái kết nối VPS ngầm
+        Label badgeVps = new Label();
+        badgeVps.getStyleClass().add("header-badge");
+        VpsClientService vps = dataService.getVpsClient();
+        if (vps != null) {
+            updateVpsBadge(badgeVps, vps.getConnectionState());
+            vps.connectionStateProperty().addListener((obs, oldVal, newVal) -> updateVpsBadge(badgeVps, newVal));
+
+            vps.addListener(new VpsClientService.VpsMessageListener() {
+                @Override
+                public void onStateChanged(VpsClientService.ConnectionState newState, String message) {
+                    // Trạng thái đã được update qua Property
+                }
+
+                @Override
+                public void onMessageReceived(String rawJson) {
+                    javafx.application.Platform.runLater(() -> {
+                        showToast("📡 VPS gửi dữ liệu: " + (rawJson.length() > 60 ? rawJson.substring(0, 57) + "..." : rawJson));
+                    });
+                }
+
+                @Override
+                public void onMessageSent(String rawJson, boolean success) {
+                }
+            });
+        }
+
         String today = LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, dd/MM/yyyy", Locale.forLanguageTag("vi-VN")));
         Label lblDate = new Label("📅 " + today);
         lblDate.setStyle("-fx-font-size: 12px; -fx-text-fill: #64748B; -fx-font-weight: 500;");
@@ -193,10 +221,23 @@ public class MainController {
         Label badgeAdmin = new Label("👤 Tài khoản Phụ Huynh");
         badgeAdmin.getStyleClass().add("header-badge");
 
-        rightBox.getChildren().addAll(lblDate, badgeAdmin);
+        rightBox.getChildren().addAll(badgeVps, lblDate, badgeAdmin);
 
         header.getChildren().addAll(leftText, spacer, rightBox);
         return header;
+    }
+
+    private void updateVpsBadge(Label badge, VpsClientService.ConnectionState state) {
+        if (state == null) return;
+        badge.setText(state.getIcon() + " " + state.getDescription());
+        String bg;
+        switch (state) {
+            case AUTHENTICATED -> bg = "#DEF7EC";
+            case CONNECTED -> bg = "#E1EFFE";
+            case CONNECTING -> bg = "#FEF08A";
+            default -> bg = "#FDE8E8";
+        }
+        badge.setStyle("-fx-background-color: " + bg + "; -fx-text-fill: " + state.getColorHex() + "; -fx-font-weight: bold; -fx-padding: 4 10; -fx-background-radius: 12; -fx-font-size: 11px;");
     }
 
     private void setupToastBox() {

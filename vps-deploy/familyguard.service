@@ -1,0 +1,20 @@
+[Unit]
+Description=FamilyGuard DNS Forwarder and TCP Control Service
+After=network.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/familyguard
+ExecStart=/opt/familyguard/dns_forwarder
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+# Ghi log chuẩn systemd journal
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

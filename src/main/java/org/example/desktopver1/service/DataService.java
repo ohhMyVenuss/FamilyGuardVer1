@@ -10,8 +10,12 @@ import org.example.desktopver1.model.CategoryRule;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.model.TimeSchedule;
 
+import org.example.desktopver1.network.VpsClientService;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Service quản trị trạng thái và dữ liệu nghiệp vụ của ứng dụng bảo vệ truy cập mạng.
@@ -19,15 +23,16 @@ import java.time.format.DateTimeFormatter;
  * 
  * LƯU Ý CHO MÔN HỌC LẬP TRÌNH MẠNG:
  * Khi tích hợp với các module mạng thực tế:
- * - Có thể mở Socket Client / TCP connection đến Router/Proxy Server hoặc Agent con trên máy trẻ em.
+ * - Mở luồng ngầm Socket Client / TCP connection đến VPS (103.74.101.176:9000).
  * - Các phương thức như toggleDeviceBlock(), toggleEmergencyPause(), addBlacklistDomain() 
- *   vừa cập nhật SQLite cục bộ, vừa gửi gói tin điều khiển (Packet/JSON qua Socket) đến Server giám sát mạng.
+ *   vừa cập nhật SQLite cục bộ, vừa gửi gói tin JSON qua Socket đến VPS quản trị mạng.
  */
 public class DataService {
 
     private static DataService instance;
 
     private final DatabaseManager dbManager;
+    private final VpsClientService vpsClient;
 
     // Trạng thái toàn cục của hệ thống
     private final BooleanProperty protectionActive = new SimpleBooleanProperty(true);
@@ -45,12 +50,37 @@ public class DataService {
     private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss - dd/MM");
 
     public DataService() {
-        this(DatabaseManager.getInstance());
+        this(DatabaseManager.getInstance(), VpsClientService.getInstance());
     }
 
     public DataService(DatabaseManager dbManager) {
+        this(dbManager, VpsClientService.getInstance());
+    }
+
+    public DataService(DatabaseManager dbManager, VpsClientService vpsClient) {
         this.dbManager = dbManager;
+        this.vpsClient = vpsClient;
         loadFromDatabase();
+
+        if (this.vpsClient != null) {
+            this.vpsClient.addListener(new VpsClientService.VpsMessageListener() {
+                @Override
+                public void onStateChanged(VpsClientService.ConnectionState newState, String message) {
+                    if (newState == VpsClientService.ConnectionState.AUTHENTICATED) {
+                        syncFullStateToVps();
+                    }
+                }
+
+                @Override
+                public void onMessageReceived(String rawJson) {}
+
+                @Override
+                public void onMessageSent(String rawJson, boolean success) {}
+            });
+            if (this.vpsClient.getConnectionState() == VpsClientService.ConnectionState.AUTHENTICATED) {
+                syncFullStateToVps();
+            }
+        }
     }
 
     public static synchronized DataService getInstance() {
@@ -88,6 +118,9 @@ public class DataService {
         this.protectionActive.set(active);
         dbManager.setSetting("protection_active", String.valueOf(active));
         addSystemLog("Hệ thống bảo vệ " + (active ? "ĐÃ ĐƯỢC BẬT" : "ĐÃ TẠM DỪNG"), "Hệ thống", active ? "CHO PHÉP" : "CẢNH BÁO");
+        if (vpsClient != null) {
+            vpsClient.sendProtectionToggle(active);
+        }
     }
 
     public void toggleEmergencyPause(boolean pause) {
@@ -98,6 +131,9 @@ public class DataService {
             d.setBlocked(pause);
         }
         addSystemLog("Chế độ TẠM DỪNG MẠNG KHẨN CẤP: " + (pause ? "KÍCH HOẠT" : "ĐÃ HỦY"), "Tất cả thiết bị", pause ? "ĐÃ CHẶN" : "CHO PHÉP");
+        if (vpsClient != null) {
+            vpsClient.sendEmergencyPause(pause);
+        }
     }
 
     public void toggleDeviceBlock(Device device) {
@@ -105,12 +141,18 @@ public class DataService {
         device.setBlocked(newState);
         dbManager.updateDeviceBlock(device.getId(), newState);
         addSystemLog((newState ? "Ngắt mạng internet: " : "Khôi phục mạng: ") + device.getName(), device.getName(), newState ? "ĐÃ CHẶN" : "CHO PHÉP");
+        if (vpsClient != null) {
+            vpsClient.sendDeviceBlock(device.getId(), device.getName(), device.getIpAddress(), device.getMacAddress(), newState);
+        }
     }
 
     public void addDevice(Device device) {
         dbManager.saveDevice(device);
         devices.add(device);
         addSystemLog("Đã thêm thiết bị mới: " + device.getName(), device.getName(), "CHO PHÉP");
+        if (vpsClient != null) {
+            vpsClient.sendAddDevice(device);
+        }
     }
 
     public void addBlacklistDomain(String domain) {
@@ -119,6 +161,9 @@ public class DataService {
             blacklistDomains.add(0, clean);
             dbManager.insertBlacklistDomain(clean);
             addSystemLog("Thêm tên miền chặn: " + clean, "Bộ lọc", "ĐÃ CHẶN");
+            if (vpsClient != null) {
+                vpsClient.sendBlacklistDomain(clean, "ADD");
+            }
         }
     }
 
@@ -126,6 +171,16 @@ public class DataService {
         blacklistDomains.remove(domain);
         dbManager.deleteBlacklistDomain(domain);
         addSystemLog("Đã gỡ tên miền khỏi danh sách chặn: " + domain, "Bộ lọc", "CHO PHÉP");
+        if (vpsClient != null) {
+            vpsClient.sendBlacklistDomain(domain, "REMOVE");
+            if (domain != null && domain.toLowerCase().contains("tiktok")) {
+                vpsClient.sendBlacklistDomain("tiktok.com", "REMOVE");
+                vpsClient.sendBlacklistDomain("tiktokv.com", "REMOVE");
+                vpsClient.sendBlacklistDomain("tiktokcdn.com", "REMOVE");
+                vpsClient.sendBlacklistDomain("byteoversea.com", "REMOVE");
+                vpsClient.sendBlacklistDomain("ibytedtos.com", "REMOVE");
+            }
+        }
     }
 
     public void addWhitelistDomain(String domain) {
@@ -134,6 +189,9 @@ public class DataService {
             whitelistDomains.add(0, clean);
             dbManager.insertWhitelistDomain(clean);
             addSystemLog("Thêm tên miền cho phép: " + clean, "Bộ lọc", "CHO PHÉP");
+            if (vpsClient != null) {
+                vpsClient.sendWhitelistDomain(clean, "ADD");
+            }
         }
     }
 
@@ -141,6 +199,9 @@ public class DataService {
         whitelistDomains.remove(domain);
         dbManager.deleteWhitelistDomain(domain);
         addSystemLog("Đã xóa khỏi danh sách cho phép: " + domain, "Bộ lọc", "CẢNH BÁO");
+        if (vpsClient != null) {
+            vpsClient.sendWhitelistDomain(domain, "REMOVE");
+        }
     }
 
     public void toggleCategoryRule(CategoryRule rule) {
@@ -148,6 +209,9 @@ public class DataService {
         rule.setBlocked(newState);
         dbManager.updateCategoryRule(rule.getId(), newState);
         addSystemLog((newState ? "Kích hoạt chặn danh mục: " : "Bỏ chặn danh mục: ") + rule.getName(), "Bộ lọc danh mục", newState ? "ĐÃ CHẶN" : "CHO PHÉP");
+        if (vpsClient != null) {
+            vpsClient.sendCategoryRuleUpdate(rule.getId(), rule.getName(), newState);
+        }
     }
 
     public void addSystemLog(String description, String source, String action) {
@@ -239,5 +303,56 @@ public class DataService {
             }
         }
         return count;
+    }
+
+    public void updateDailyLimits(double weekdayHours, double weekendHours) {
+        addSystemLog(String.format("Cập nhật hạn mức: T2-T6: %.1fh, T7-CN: %.1fh", weekdayHours, weekendHours), "Quản trị", "CẬP NHẬT");
+        if (vpsClient != null) {
+            vpsClient.sendTimeLimits(weekdayHours, weekendHours);
+        }
+    }
+
+    public void updateCurfew(boolean enabled, String startTime, String endTime) {
+        addSystemLog(String.format("Cập nhật giờ giới nghiêm (%s): %s -> %s", enabled ? "BẬT" : "TẮT", startTime, endTime), "Quản trị", "CẬP NHẬT");
+        if (vpsClient != null) {
+            vpsClient.sendCurfew(enabled, startTime, endTime);
+        }
+    }
+
+    /**
+     * Hàm gửi chuỗi JSON tùy ý lên VPS khi phụ huynh thao tác trên giao diện.
+     */
+    public void sendJsonToVps(String jsonString) {
+        if (vpsClient != null) {
+            vpsClient.sendJson(jsonString);
+        }
+    }
+
+    public VpsClientService getVpsClient() {
+        return vpsClient;
+    }
+
+    /**
+     * Đồng bộ toàn bộ cấu hình SQLite lên VPS (SYNC_RULES)
+     */
+    public void syncFullStateToVps() {
+        if (vpsClient == null) return;
+        List<String> bl = new ArrayList<>(blacklistDomains);
+        List<String> wl = new ArrayList<>(whitelistDomains);
+        List<String> blockedIps = new ArrayList<>();
+        for (Device d : devices) {
+            if (d.isBlocked() && d.getIpAddress() != null && !d.getIpAddress().trim().isEmpty()) {
+                blockedIps.add(d.getIpAddress().trim());
+            }
+        }
+        vpsClient.sendSyncRules(
+                protectionActive.get(),
+                emergencyPause.get(),
+                bl,
+                wl,
+                blockedIps
+        );
+        System.out.println("[DataService] Đã gửi bản tin SYNC_RULES lên VPS: "
+                + bl.size() + " cấm, " + wl.size() + " cho phép, " + blockedIps.size() + " thiết bị bị khóa mạng.");
     }
 }

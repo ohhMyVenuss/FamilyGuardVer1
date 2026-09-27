@@ -1,0 +1,17 @@
+[Unit]
+Description=FamilyGuard Mini HTTP Block Page Service (Port 80)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/familyguard
+ExecStart=/usr/bin/python3 /opt/familyguard/http_block_server.py
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

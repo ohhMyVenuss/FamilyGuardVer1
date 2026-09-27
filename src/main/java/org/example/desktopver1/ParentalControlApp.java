@@ -1,9 +1,11 @@
 package org.example.desktopver1;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 import org.example.desktopver1.controller.MainController;
+import org.example.desktopver1.network.VpsClientService;
 
 import java.net.URL;
 
@@ -24,6 +26,9 @@ public class ParentalControlApp extends Application {
 
     @Override
     public void start(Stage primaryStage) {
+        // Khởi động luồng ngầm duy trì kết nối tới VPS (103.74.101.176:9000)
+        VpsClientService.getInstance().start();
+
         // Khởi tạo Controller điều phối giao diện
         MainController mainController = new MainController();
 
@@ -42,6 +47,13 @@ public class ParentalControlApp extends Application {
         primaryStage.setMinWidth(MIN_WIDTH);
         primaryStage.setMinHeight(MIN_HEIGHT);
         primaryStage.centerOnScreen();
+
+        // Đảm bảo ngắt các luồng ngầm an toàn khi đóng cửa sổ
+        primaryStage.setOnCloseRequest(e -> {
+            VpsClientService.getInstance().stop();
+            Platform.exit();
+            System.exit(0);
+        });
 
         primaryStage.show();
     }

@@ -13,4 +13,5 @@ module org.example.desktopver1 {
     exports org.example.desktopver1.view;
     exports org.example.desktopver1.service;
     exports org.example.desktopver1.database;
+    exports org.example.desktopver1.network;
 }

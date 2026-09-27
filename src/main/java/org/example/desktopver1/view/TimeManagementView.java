@@ -98,6 +98,7 @@ public class TimeManagementView extends ScrollPane {
         Button btnSaveLimits = new Button("Lưu hạn mức");
         btnSaveLimits.getStyleClass().add("btn-primary");
         btnSaveLimits.setOnAction(e -> {
+            dataService.updateDailyLimits(sliderWeekday.getValue(), sliderWeekend.getValue());
             toastNotifier.accept(String.format("Đã cập nhật hạn mức: Ngày thường %.1fh - Cuối tuần %.1fh", sliderWeekday.getValue(), sliderWeekend.getValue()));
         });
 
@@ -146,8 +147,12 @@ public class TimeManagementView extends ScrollPane {
         Button btnSaveCurfew = new Button("Lưu giờ giới nghiêm");
         btnSaveCurfew.getStyleClass().add("btn-primary");
         btnSaveCurfew.setOnAction(e -> {
-            if (cbEnableCurfew.isSelected()) {
-                toastNotifier.accept("Đã bật khóa ban đêm từ " + cbStart.getValue() + " đến " + cbEnd.getValue());
+            boolean enabled = cbEnableCurfew.isSelected();
+            String start = cbStart.getValue();
+            String end = cbEnd.getValue();
+            dataService.updateCurfew(enabled, start, end);
+            if (enabled) {
+                toastNotifier.accept("Đã bật khóa ban đêm từ " + start + " đến " + end);
             } else {
                 toastNotifier.accept("Đã tắt chế độ giới nghiêm ban đêm.");
             }
