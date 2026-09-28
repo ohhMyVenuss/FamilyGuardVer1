@@ -128,6 +128,14 @@ class DatabaseManagerTest {
         Device restored = updatedList.stream().filter(d -> d.getId().equals("DEV-99")).findFirst().orElse(null);
         assertNotNull(restored);
         assertFalse(restored.isBlocked(), "Thiết bị DEV-99 phải được mở lại mạng.");
+
+        // Xóa thiết bị DEV-99
+        dbManager.deleteDevice("DEV-99");
+        assertEquals(4, dbManager.getAllDevices().size(), "Sau khi xóa DEV-99, còn lại 4 thiết bị.");
+
+        // Dọn sạch toàn bộ thiết bị
+        dbManager.clearAllDevices();
+        assertEquals(0, dbManager.getAllDevices().size(), "Sau khi dọn sạch, danh sách thiết bị phải rỗng.");
     }
 
     @Test

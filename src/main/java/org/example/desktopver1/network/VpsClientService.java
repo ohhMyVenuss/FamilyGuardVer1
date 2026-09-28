@@ -7,7 +7,11 @@ import javafx.beans.property.ReadOnlyStringProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import com.google.gson.Gson;
+import org.example.desktopver1.model.AccessLog;
 import org.example.desktopver1.model.Device;
+import org.example.desktopver1.model.VpsSyncLogPayload;
+import org.example.desktopver1.service.DataService;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -60,10 +64,23 @@ public class VpsClientService {
         }
     }
 
+    public static class WireGuardPeerResult {
+        public boolean success;
+        public String action;
+        public String deviceName;
+        public String deviceType;
+        public String assignedIp;
+        public String configText;
+        public String qrBase64;
+        public String error;
+        public String message;
+    }
+
     public interface VpsMessageListener {
         void onStateChanged(ConnectionState newState, String message);
         void onMessageReceived(String rawJson);
         void onMessageSent(String rawJson, boolean success);
+        default void onWireGuardPeerCreated(WireGuardPeerResult result) {}
     }
 
     private static VpsClientService instance;
@@ -101,6 +118,7 @@ public class VpsClientService {
     private final List<VpsMessageListener> listeners = new CopyOnWriteArrayList<>();
 
     private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private final Gson gson = new Gson();
 
     public VpsClientService() {
         this(DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PASS);
@@ -290,6 +308,23 @@ public class VpsClientService {
             parseAndSyncLogs(rawJson);
         }
 
+        // Tự động phân tích phản hồi cấp cấu hình WireGuard từ VPS
+        if (rawJson != null && rawJson.contains("\"CREATE_WIREGUARD_PEER\"")) {
+            try {
+                WireGuardPeerResult result = gson.fromJson(rawJson, WireGuardPeerResult.class);
+                if (result != null) {
+                    for (VpsMessageListener listener : listeners) {
+                        try {
+                            runOnFxThread(() -> listener.onWireGuardPeerCreated(result));
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("[VPS-Client] Lỗi giải mã phản hồi CREATE_WIREGUARD_PEER: " + e.getMessage());
+            }
+        }
+
         // Báo cho các listener đã đăng ký
         for (VpsMessageListener listener : listeners) {
             try {
@@ -301,54 +336,50 @@ public class VpsClientService {
     }
 
     /**
-     * Giải mã gói SYNC_LOGS định kỳ 60s từ dns_forwarder.cpp và lưu vào AccessLogs của DataService.
+     * Giải mã mảng JSON SYNC_LOGS từ VPS bằng thư viện Gson, chuyển thành đối tượng AccessLog và lưu vào SQLite.
+     * Sử dụng DataService và Platform.runLater() để cập nhật giao diện thời gian thực.
      */
     private void parseAndSyncLogs(String rawJson) {
         try {
-            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                "\\{\\s*\"client_ip\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"domain\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"status\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"timestamp\"\\s*:\\s*\"([^\"]+)\"\\s*\\}"
-                + "|"
-                + "\\{\\s*\"domain\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"status\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"client_ip\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"timestamp\"\\s*:\\s*\"([^\"]+)\"\\s*\\}"
-            );
-            java.util.regex.Matcher matcher = pattern.matcher(rawJson);
+            VpsSyncLogPayload payload = gson.fromJson(rawJson, VpsSyncLogPayload.class);
+            if (payload == null || payload.getLogs() == null || payload.getLogs().isEmpty()) {
+                return;
+            }
+
+            DataService dataService = DataService.getInstance();
+            List<AccessLog> newLogs = new java.util.ArrayList<>();
+
             int count = 0;
-            while (matcher.find()) {
-                String domain, status, clientIp, timestamp;
-                if (matcher.group(1) != null) {
-                    clientIp = matcher.group(1);
-                    domain = matcher.group(2);
-                    status = matcher.group(3);
-                    timestamp = matcher.group(4);
-                } else {
-                    domain = matcher.group(5);
-                    status = matcher.group(6);
-                    clientIp = matcher.group(7);
-                    timestamp = matcher.group(8);
-                }
+            for (VpsSyncLogPayload.VpsLogEntry entry : payload.getLogs()) {
+                if (entry == null) continue;
+                String domain = entry.getDomain() != null ? entry.getDomain() : "UNKNOWN";
+                String status = entry.getStatus() != null ? entry.getStatus() : "ALLOWED";
+                String clientIp = entry.getClientIp() != null ? entry.getClientIp() : "10.0.0.2";
+                String timestamp = entry.getTimestamp() != null ? entry.getTimestamp() : LocalDateTime.now().format(timeFormatter);
 
                 String action = "BLOCKED".equalsIgnoreCase(status) ? "ĐÃ CHẶN" : "CHO PHÉP";
                 String id = "VPS-DNS-" + System.currentTimeMillis() + "-" + (++count);
-                org.example.desktopver1.model.AccessLog log = new org.example.desktopver1.model.AccessLog(
-                    id,
-                    timestamp,
-                    "Thiết bị (" + clientIp + ")",
-                    domain,
-                    "DNS Firewall",
-                    action,
-                    "Đồng bộ từ VPS"
-                );
+                String deviceName = dataService.findDeviceNameByIp(clientIp);
 
-                runOnFxThread(() -> {
-                    org.example.desktopver1.service.DataService.getInstance().addAccessLog(log);
-                });
+                AccessLog log = new AccessLog(
+                        id,
+                        timestamp,
+                        deviceName,
+                        domain,
+                        "DNS Firewall",
+                        action,
+                        "Đồng bộ từ VPS"
+                );
+                newLogs.add(log);
             }
 
-            if (count > 0) {
-                final int total = count;
-                System.out.println("[VPS-Client] Đã đồng bộ thành công " + total + " nhật ký DNS từ VPS vào bảng điều khiển phụ huynh.");
+            if (!newLogs.isEmpty()) {
+                // Lưu vào SQLite đồng thời cập nhật ObservableList bằng Platform.runLater()
+                dataService.addAccessLogs(newLogs);
+                System.out.println("[VPS-Client] Đã dùng Gson parse thành công " + newLogs.size() + " đối tượng AccessLog và lưu vào SQLite.");
             }
         } catch (Exception e) {
-            System.err.println("[VPS-Client] Lỗi khi phân tích gói SYNC_LOGS: " + e.getMessage());
+            System.err.println("[VPS-Client] Lỗi khi dùng Gson phân tích gói SYNC_LOGS: " + e.getMessage());
         }
     }
 
@@ -602,6 +633,23 @@ public class VpsClientService {
                 .put("ip", device.getIpAddress())
                 .put("mac", device.getMacAddress())
                 .put("blocked", device.isBlocked())
+                .put("sender", "PARENT")
+                .put("timestamp", LocalDateTime.now().format(timeFormatter))
+                .build();
+        sendJson(json);
+    }
+
+    /**
+     * Gửi yêu cầu lên VPS để tự động sinh cặp khóa WireGuard, cấp IP ảo và tạo mã QR.
+     *
+     * @param deviceName Tên thiết bị (VD: iPhone Bé Minh)
+     * @param deviceType Loại thiết bị (VD: Điện thoại, Laptop...)
+     */
+    public void sendCreateWireGuardPeer(String deviceName, String deviceType) {
+        String json = JsonUtil.builder()
+                .put("action", "CREATE_WIREGUARD_PEER")
+                .put("deviceName", deviceName != null ? deviceName.trim() : "ThietBiCon")
+                .put("deviceType", deviceType != null ? deviceType.trim() : "Điện thoại")
                 .put("sender", "PARENT")
                 .put("timestamp", LocalDateTime.now().format(timeFormatter))
                 .build();

@@ -1,17 +1,30 @@
 package org.example.desktopver1.view;
 
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.*;
+import javafx.stage.FileChooser;
 import org.example.desktopver1.model.Device;
+import org.example.desktopver1.network.VpsClientService;
 import org.example.desktopver1.service.DataService;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.function.Consumer;
 
 /**
  * Giao diện Quản lý thiết bị (Device Management):
  * - Theo dõi các thiết bị của con đang kết nối trong gia đình
+ * - Tự động hóa cấp cấu hình WireGuard VPN & Sinh mã QR trực tiếp từ VPS
  * - Kiểm tra IP, MAC, trạng thái Online/Offline
  * - Cắt mạng internet hoặc khôi phục kết nối cho từng máy
  * - Tích hợp mô phỏng quét mạng nội bộ (LAN Scan)
@@ -21,10 +34,31 @@ public class DeviceManagerView extends ScrollPane {
     private final DataService dataService;
     private final Consumer<String> toastNotifier;
     private VBox devicesContainer;
+    private Dialog<?> waitingDialog;
 
     public DeviceManagerView(DataService dataService, Consumer<String> toastNotifier) {
         this.dataService = dataService;
         this.toastNotifier = toastNotifier;
+
+        // Lắng nghe sự kiện cấp cấu hình WireGuard từ VPS
+        VpsClientService vps = dataService.getVpsClient() != null ? dataService.getVpsClient() : VpsClientService.getInstance();
+        if (vps != null) {
+            vps.addListener(new VpsClientService.VpsMessageListener() {
+                @Override
+                public void onStateChanged(VpsClientService.ConnectionState newState, String message) {}
+
+                @Override
+                public void onMessageReceived(String rawJson) {}
+
+                @Override
+                public void onMessageSent(String rawJson, boolean success) {}
+
+                @Override
+                public void onWireGuardPeerCreated(VpsClientService.WireGuardPeerResult result) {
+                    handleWireGuardPeerResult(result);
+                }
+            });
+        }
 
         setFitToWidth(true);
         setStyle("-fx-background-color: transparent; -fx-background: transparent;");
@@ -63,15 +97,19 @@ public class DeviceManagerView extends ScrollPane {
         Button btnScan = new Button("🔍 Quét mạng LAN");
         btnScan.getStyleClass().add("btn-outline");
         btnScan.setOnAction(e -> {
-            toastNotifier.accept("Đang quét dải mạng 192.168.1.0/24... Đã đồng bộ 4 thiết bị!");
+            toastNotifier.accept("Đang quét dải mạng 192.168.1.0/24... Hiện có " + dataService.getDevices().size() + " thiết bị.");
             refreshDevicesList();
         });
 
-        Button btnAdd = new Button("+ Thêm thiết bị mới");
-        btnAdd.getStyleClass().add("btn-primary");
-        btnAdd.setOnAction(e -> showAddDeviceDialog());
+        Button btnAddManual = new Button("+ Thêm thủ công");
+        btnAddManual.getStyleClass().add("btn-outline");
+        btnAddManual.setOnAction(e -> showAddDeviceDialog());
 
-        HBox btnGroup = new HBox(10, btnScan, btnAdd);
+        Button btnAddWireGuard = new Button("📱 + Cấp WireGuard tự động");
+        btnAddWireGuard.getStyleClass().add("btn-primary");
+        btnAddWireGuard.setOnAction(e -> showAutoWireGuardDialog());
+
+        HBox btnGroup = new HBox(10, btnScan, btnAddManual, btnAddWireGuard);
         btnGroup.setAlignment(Pos.CENTER_RIGHT);
 
         bar.getChildren().addAll(titleBox, sp, btnGroup);
@@ -133,7 +171,28 @@ public class DeviceManagerView extends ScrollPane {
             toastNotifier.accept((device.isBlocked() ? "Đã ngắt mạng internet của " : "Đã mở lại mạng cho ") + device.getName());
         });
 
-        card.getChildren().addAll(lblIcon, infoBox, btnToggleBlock);
+        // Nút xóa thiết bị
+        Button btnDelete = new Button("🗑️");
+        btnDelete.getStyleClass().add("btn-outline");
+        btnDelete.setStyle("-fx-font-size: 13px; -fx-padding: 8 12; -fx-text-fill: #EF4444; -fx-border-color: #EF4444; -fx-cursor: hand;");
+        btnDelete.setTooltip(new Tooltip("Xóa thiết bị khỏi hệ thống"));
+        btnDelete.setOnAction(e -> {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Bạn có chắc muốn xóa thiết bị \"" + device.getName() + "\" không?", ButtonType.YES, ButtonType.NO);
+            alert.setTitle("Xác nhận xóa thiết bị");
+            alert.setHeaderText(null);
+            alert.showAndWait().ifPresent(type -> {
+                if (type == ButtonType.YES) {
+                    dataService.removeDevice(device);
+                    refreshDevicesList();
+                    toastNotifier.accept("Đã xóa thiết bị: " + device.getName());
+                }
+            });
+        });
+
+        HBox actionsBox = new HBox(8, btnToggleBlock, btnDelete);
+        actionsBox.setAlignment(Pos.CENTER_RIGHT);
+
+        card.getChildren().addAll(lblIcon, infoBox, actionsBox);
         return card;
     }
 
@@ -229,5 +288,231 @@ public class DeviceManagerView extends ScrollPane {
 
         card.getChildren().addAll(lblTech, lblDesc);
         return card;
+    }
+
+    private void showAutoWireGuardDialog() {
+        VpsClientService vps = dataService.getVpsClient() != null ? dataService.getVpsClient() : VpsClientService.getInstance();
+        if (vps == null || vps.getConnectionState() != VpsClientService.ConnectionState.AUTHENTICATED) {
+            Alert alert = new Alert(Alert.AlertType.WARNING,
+                    "Ứng dụng chưa kết nối tới máy chủ VPS (103.74.101.176:9000).\n" +
+                    "Vui lòng đảm bảo dịch vụ FamilyGuard trên VPS đang hoạt động trước khi yêu cầu cấp cấu hình WireGuard.",
+                    ButtonType.OK);
+            alert.setTitle("Chưa kết nối VPS");
+            alert.setHeaderText("Cần kết nối VPS để tự động sinh khóa & cấp IP");
+            alert.showAndWait();
+            return;
+        }
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("📱 Cấp kết nối WireGuard cho điện thoại");
+        dialog.setHeaderText("Tự động sinh cặp khóa mật mã bảo mật & Cấp địa chỉ IP ảo từ VPS Cloud");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(12);
+        grid.setVgap(14);
+        grid.setPadding(new Insets(20, 20, 10, 20));
+
+        TextField tfName = new TextField();
+        tfName.setPromptText("VD: iPhone Bé Minh hoặc Samsung A54");
+        tfName.setPrefWidth(260);
+
+        ComboBox<String> cbType = new ComboBox<>();
+        cbType.getItems().addAll("Điện thoại", "Máy tính bảng", "Laptop");
+        cbType.setValue("Điện thoại");
+
+        Label lblNote = new Label("💡 Thiết bị sẽ được giám sát 24/7 kể cả khi ra khỏi nhà (dùng 4G/5G hoặc WiFi trường học).\nToàn bộ truy vấn DNS sẽ được lọc tự động tại máy chủ VPS 103.74.101.176.");
+        lblNote.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B; -fx-padding: 8; -fx-background-color: #F1F5F9; -fx-background-radius: 6;");
+        lblNote.setWrapText(true);
+
+        grid.add(new Label("Tên thiết bị của con:"), 0, 0);
+        grid.add(tfName, 1, 0);
+        grid.add(new Label("Loại thiết bị:"), 0, 1);
+        grid.add(cbType, 1, 1);
+        grid.add(lblNote, 0, 2, 2, 1);
+
+        dialog.getDialogPane().setContent(grid);
+        ButtonType btnCreateType = new ButtonType("⚡ Tạo & Sinh mã QR", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(btnCreateType, ButtonType.CANCEL);
+
+        dialog.showAndWait().ifPresent(res -> {
+            if (res == btnCreateType && !tfName.getText().trim().isEmpty()) {
+                String devName = tfName.getText().trim();
+                String devType = cbType.getValue();
+
+                // Hiển thị dialog chờ phản hồi từ VPS
+                showWaitingDialog(devName);
+
+                // Gửi lệnh lên VPS
+                vps.sendCreateWireGuardPeer(devName, devType);
+            }
+        });
+    }
+
+    private void showWaitingDialog(String deviceName) {
+        waitingDialog = new Dialog<>();
+        waitingDialog.setTitle("Đang liên hệ VPS...");
+        waitingDialog.setHeaderText("Đang tạo cấu hình WireGuard cho: " + deviceName);
+
+        VBox box = new VBox(14);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(24));
+        ProgressIndicator pi = new ProgressIndicator();
+        Label lblMsg = new Label("VPS đang sinh cặp khóa Curve25519, cấp IP 10.0.0.X và tạo mã QR...");
+        lblMsg.setStyle("-fx-text-fill: #475569; -fx-font-size: 12px;");
+        box.getChildren().addAll(pi, lblMsg);
+
+        waitingDialog.getDialogPane().setContent(box);
+        waitingDialog.getDialogPane().getButtonTypes().add(ButtonType.CANCEL);
+        waitingDialog.show();
+    }
+
+    private void handleWireGuardPeerResult(VpsClientService.WireGuardPeerResult result) {
+        if (waitingDialog != null) {
+            waitingDialog.close();
+            waitingDialog = null;
+        }
+
+        if (result == null) return;
+
+        if (result.success) {
+            boolean exists = dataService.getDevices().stream().anyMatch(d -> result.assignedIp != null && result.assignedIp.equalsIgnoreCase(d.getIpAddress()));
+            if (!exists) {
+                Device newDev = new Device(
+                        "DEV-" + (dataService.getDevices().size() + 1),
+                        result.deviceName != null ? result.deviceName : "Điện thoại con",
+                        result.deviceType != null ? result.deviceType : "Điện thoại",
+                        result.assignedIp,
+                        "WG-VIRTUAL",
+                        "Trực tuyến",
+                        false,
+                        "0h 00m"
+                );
+                dataService.addDevice(newDev);
+                refreshDevicesList();
+            }
+            toastNotifier.accept("Đã cấp cấu hình WireGuard thành công cho " + result.deviceName);
+            showWireGuardSuccessDialog(result);
+        } else {
+            Alert alert = new Alert(Alert.AlertType.ERROR, "Lỗi từ VPS: " + (result.error != null ? result.error : "Không thể tạo cấu hình WireGuard"), ButtonType.OK);
+            alert.setTitle("Tạo cấu hình thất bại");
+            alert.setHeaderText(null);
+            alert.showAndWait();
+        }
+    }
+
+    private void showWireGuardSuccessDialog(VpsClientService.WireGuardPeerResult result) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Cấu hình WireGuard - " + result.deviceName);
+        dialog.setHeaderText("🎉 ĐÃ CẤP CẤU HÌNH WIREGUARD THÀNH CÔNG");
+
+        VBox mainBox = new VBox(16);
+        mainBox.setPadding(new Insets(10));
+        mainBox.setPrefWidth(580);
+
+        HBox topInfo = new HBox(16);
+        topInfo.setAlignment(Pos.CENTER_LEFT);
+        topInfo.setPadding(new Insets(10, 14, 10, 14));
+        topInfo.setStyle("-fx-background-color: #ECFDF5; -fx-border-color: #10B981; -fx-border-radius: 8px; -fx-background-radius: 8px;");
+
+        Label lblBadge = new Label("🔒 IP: " + result.assignedIp);
+        lblBadge.setStyle("-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: #065F46;");
+        Label lblDns = new Label("🛡️ DNS Sinkhole: 10.0.0.1 (VPS Cloud)");
+        lblDns.setStyle("-fx-font-size: 12px; -fx-text-fill: #047857;");
+        topInfo.getChildren().addAll(lblBadge, new Separator(Orientation.VERTICAL), lblDns);
+
+        HBox contentRow = new HBox(20);
+        contentRow.setAlignment(Pos.CENTER_LEFT);
+
+        // Cột trái: Hiển thị mã QR
+        VBox qrBox = new VBox(8);
+        qrBox.setAlignment(Pos.CENTER);
+        qrBox.setPadding(new Insets(10));
+        qrBox.setStyle("-fx-background-color: white; -fx-border-color: #E2E8F0; -fx-border-radius: 10px; -fx-background-radius: 10px; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 8, 0, 0, 2);");
+
+        if (result.qrBase64 != null && !result.qrBase64.trim().isEmpty()) {
+            try {
+                byte[] decoded = Base64.getDecoder().decode(result.qrBase64.trim());
+                Image qrImg = new Image(new ByteArrayInputStream(decoded));
+                ImageView iv = new ImageView(qrImg);
+                iv.setFitWidth(230);
+                iv.setFitHeight(230);
+                iv.setPreserveRatio(true);
+                qrBox.getChildren().add(iv);
+            } catch (Exception e) {
+                Label lblNoQr = new Label("Không thể tải ảnh QR: " + e.getMessage());
+                qrBox.getChildren().add(lblNoQr);
+            }
+        } else {
+            Label lblNoQr = new Label("Chưa có mã QR. Vui lòng sao chép file cấu hình bên dưới.");
+            lblNoQr.setWrapText(true);
+            qrBox.getChildren().add(lblNoQr);
+        }
+
+        Label lblQrGuide = new Label("📸 Quét bằng app WireGuard");
+        lblQrGuide.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #2563EB;");
+        qrBox.getChildren().add(lblQrGuide);
+
+        // Cột phải: Hướng dẫn & Tùy chọn sao chép
+        VBox guideBox = new VBox(10);
+        guideBox.setAlignment(Pos.TOP_LEFT);
+        HBox.setHgrow(guideBox, Priority.ALWAYS);
+
+        Label lblStepsTitle = new Label("📌 Các bước kích hoạt trên điện thoại con:");
+        lblStepsTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #1E293B;");
+
+        Label step1 = new Label("1. Cài app WireGuard từ App Store hoặc CH Play.");
+        step1.setStyle("-fx-font-size: 11px; -fx-text-fill: #475569;");
+        Label step2 = new Label("2. Mở app -> Bấm (+) -> Chọn 'Quét mã QR'.");
+        step2.setStyle("-fx-font-size: 11px; -fx-text-fill: #475569;");
+        Label step3 = new Label("3. Hướng camera quét hình bên cạnh và kích hoạt!");
+        step3.setStyle("-fx-font-size: 11px; -fx-text-fill: #475569;");
+
+        Label lblConfTitle = new Label("📄 File cấu hình WireGuard (.conf):");
+        lblConfTitle.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #475569;");
+
+        TextArea taConf = new TextArea(result.configText != null ? result.configText : "");
+        taConf.setEditable(false);
+        taConf.setPrefRowCount(5);
+        taConf.setStyle("-fx-font-family: monospace; -fx-font-size: 10px;");
+
+        Button btnCopy = new Button("📋 Sao chép cấu hình");
+        btnCopy.getStyleClass().add("btn-outline");
+        btnCopy.setOnAction(e -> {
+            ClipboardContent clip = new ClipboardContent();
+            clip.putString(result.configText);
+            Clipboard.getSystemClipboard().setContent(clip);
+            toastNotifier.accept("Đã sao chép cấu hình WireGuard vào bộ nhớ tạm!");
+        });
+
+        Button btnSave = new Button("💾 Lưu file .conf");
+        btnSave.getStyleClass().add("btn-outline");
+        btnSave.setOnAction(e -> {
+            FileChooser fc = new FileChooser();
+            fc.setTitle("Lưu cấu hình WireGuard");
+            String safeFile = result.deviceName != null ? result.deviceName.replaceAll("\\s+", "_") : "child";
+            fc.setInitialFileName(safeFile + "_wireguard.conf");
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("WireGuard Config (*.conf)", "*.conf"));
+            File file = fc.showSaveDialog(getScene().getWindow());
+            if (file != null) {
+                try (FileWriter writer = new FileWriter(file, StandardCharsets.UTF_8)) {
+                    writer.write(result.configText);
+                    toastNotifier.accept("Đã lưu file: " + file.getName());
+                } catch (Exception ex) {
+                    Alert err = new Alert(Alert.AlertType.ERROR, "Lỗi lưu file: " + ex.getMessage(), ButtonType.OK);
+                    err.showAndWait();
+                }
+            }
+        });
+
+        HBox btnRow = new HBox(8, btnCopy, btnSave);
+
+        guideBox.getChildren().addAll(lblStepsTitle, step1, step2, step3, new Separator(), lblConfTitle, taConf, btnRow);
+        contentRow.getChildren().addAll(qrBox, guideBox);
+
+        mainBox.getChildren().addAll(topInfo, contentRow);
+
+        dialog.getDialogPane().setContent(mainBox);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.OK);
+        dialog.showAndWait();
     }
 }

@@ -33,6 +33,13 @@ public class DashboardView extends ScrollPane {
     private Button btnToggleProtection;
     private Button btnEmergency;
 
+    // Dữ liệu động cho Biểu đồ PieChart và Bảng thống kê KPI
+    private final ObservableList<PieChart.Data> chartData = FXCollections.observableArrayList();
+    private Label lblBlockedKpi;
+    private Label lblOnlineDevicesKpi;
+    private Label lblViolationKpi;
+    private VBox eventsList;
+
     public DashboardView(DataService dataService, Consumer<String> toastNotifier, Runnable navigateToLogs) {
         this.dataService = dataService;
         this.toastNotifier = toastNotifier;
@@ -61,6 +68,16 @@ public class DashboardView extends ScrollPane {
         // Lắng nghe thay đổi trạng thái từ DataService
         dataService.protectionActiveProperty().addListener((obs, oldVal, newVal) -> updateBannerStyle(newVal));
         dataService.emergencyPauseProperty().addListener((obs, oldVal, newVal) -> updateEmergencyButton(newVal));
+
+        // Tự động làm mới PieChart và Thống kê khi có bản ghi SYNC_LOGS mới từ VPS
+        dataService.getAccessLogs().addListener((javafx.collections.ListChangeListener<AccessLog>) c -> {
+            javafx.application.Platform.runLater(this::refreshChartsAndStats);
+        });
+        dataService.getDevices().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.Device>) c -> {
+            javafx.application.Platform.runLater(this::refreshChartsAndStats);
+        });
+
+        refreshChartsAndStats();
     }
 
     private HBox createStatusBanner() {
@@ -145,14 +162,29 @@ public class DashboardView extends ScrollPane {
         grid.getColumnConstraints().addAll(col1, col2, col3, col4);
 
         grid.add(createKpiCard("⏱️", "Thời gian online hôm nay", "3h 45m", "Hạn mức cho phép: 4h00m", false), 0, 0);
-        grid.add(createKpiCard("🛡️", "Số lượt trang đã chặn", dataService.getTotalBlockedEventsCount() + " lần", "+8 lần so với hôm qua", false), 1, 0);
-        grid.add(createKpiCard("💻", "Thiết bị trẻ đang online", dataService.getOnlineDeviceCount() + " / " + dataService.getDevices().size(), "Đang kết nối Wi-Fi nhà", false), 2, 0);
-        grid.add(createKpiCard("⚠️", "Cảnh báo vi phạm", "2 lần", "Cố truy cập web cấm", true), 3, 0);
+
+        lblBlockedKpi = new Label(dataService.getTotalBlockedEventsCount() + " lần");
+        lblBlockedKpi.getStyleClass().add("kpi-value");
+        grid.add(createKpiCardWithLabel("🛡️", "Số lượt trang đã chặn", lblBlockedKpi, "+8 lần so với hôm qua", false), 1, 0);
+
+        lblOnlineDevicesKpi = new Label(dataService.getOnlineDeviceCount() + " / " + dataService.getDevices().size());
+        lblOnlineDevicesKpi.getStyleClass().add("kpi-value");
+        grid.add(createKpiCardWithLabel("💻", "Thiết bị trẻ đang online", lblOnlineDevicesKpi, "Đang kết nối qua WireGuard/Wi-Fi", false), 2, 0);
+
+        lblViolationKpi = new Label("0 lần");
+        lblViolationKpi.getStyleClass().add("kpi-value");
+        grid.add(createKpiCardWithLabel("⚠️", "Cảnh báo vi phạm", lblViolationKpi, "Cố truy cập web cấm", true), 3, 0);
 
         return grid;
     }
 
     private VBox createKpiCard(String icon, String title, String value, String hint, boolean isDangerHint) {
+        Label lblValue = new Label(value);
+        lblValue.getStyleClass().add("kpi-value");
+        return createKpiCardWithLabel(icon, title, lblValue, hint, isDangerHint);
+    }
+
+    private VBox createKpiCardWithLabel(String icon, String title, Label lblValue, String hint, boolean isDangerHint) {
         VBox card = new VBox(6);
         card.getStyleClass().add("kpi-card");
 
@@ -166,9 +198,6 @@ public class DashboardView extends ScrollPane {
         lblTitle.getStyleClass().add("kpi-title");
 
         topRow.getChildren().addAll(lblIcon, lblTitle);
-
-        Label lblValue = new Label(value);
-        lblValue.getStyleClass().add("kpi-value");
 
         Label lblHint = new Label(hint);
         lblHint.getStyleClass().add(isDangerHint ? "kpi-hint-danger" : "kpi-hint");
@@ -189,13 +218,6 @@ public class DashboardView extends ScrollPane {
         chartTitle.getStyleClass().add("card-title");
         Label chartSub = new Label("Thống kê theo lưu lượng và danh mục truy cập hôm nay");
         chartSub.getStyleClass().add("card-subtitle");
-
-        ObservableList<PieChart.Data> chartData = FXCollections.observableArrayList(
-                new PieChart.Data("Học tập (OLM, VioEdu)", 30),
-                new PieChart.Data("Xem Video (YouTube)", 35),
-                new PieChart.Data("Game Online", 20),
-                new PieChart.Data("Mạng xã hội & Khác", 15)
-        );
 
         PieChart pieChart = new PieChart(chartData);
         pieChart.setPrefHeight(280);
@@ -232,18 +254,73 @@ public class DashboardView extends ScrollPane {
 
         eventHeader.getChildren().addAll(titleBox, sp, btnViewAll);
 
-        VBox eventsList = new VBox(10);
-        // Lấy 4 logs mới nhất
-        int max = Math.min(4, dataService.getAccessLogs().size());
-        for (int i = 0; i < max; i++) {
-            AccessLog log = dataService.getAccessLogs().get(i);
-            eventsList.getChildren().add(createEventRow(log));
-        }
-
+        eventsList = new VBox(10);
         eventsCard.getChildren().addAll(eventHeader, eventsList);
 
         box.getChildren().addAll(chartCard, eventsCard);
         return box;
+    }
+
+    /**
+     * Tự động làm mới dữ liệu biểu đồ tròn PieChart, thẻ KPI và bảng sự kiện gần đây
+     * Được gọi qua Platform.runLater() khi luồng Socket nhận mảng SYNC_LOGS.
+     */
+    public void refreshChartsAndStats() {
+        int blockedCount = 0;
+        int allowedCount = 0;
+        int eduCount = 0;
+        int entertainmentCount = 0;
+
+        for (AccessLog log : dataService.getAccessLogs()) {
+            if ("ĐÃ CHẶN".equalsIgnoreCase(log.getAction())) {
+                blockedCount++;
+            } else {
+                allowedCount++;
+                String d = log.getDomain() != null ? log.getDomain().toLowerCase() : "";
+                if (d.contains("khan") || d.contains("olm") || d.contains("vietjack") || d.contains("hocmai") || d.contains("coursera") || d.contains("scratch")) {
+                    eduCount++;
+                } else if (d.contains("youtube") || d.contains("googlevideo") || d.contains("ytimg") || d.contains("facebook") || d.contains("fbcdn") || d.contains("tiktok")) {
+                    entertainmentCount++;
+                }
+            }
+        }
+
+        int generalCount = allowedCount - eduCount - entertainmentCount;
+        if (generalCount < 0) generalCount = 0;
+
+        chartData.clear();
+        if (blockedCount > 0) {
+            chartData.add(new PieChart.Data("Đã chặn vi phạm (" + blockedCount + ")", blockedCount));
+        }
+        if (eduCount > 0) {
+            chartData.add(new PieChart.Data("Học tập trực tuyến (" + eduCount + ")", eduCount));
+        }
+        if (entertainmentCount > 0) {
+            chartData.add(new PieChart.Data("Video & MXH (" + entertainmentCount + ")", entertainmentCount));
+        }
+        if (generalCount > 0 || chartData.isEmpty()) {
+            int displayGen = generalCount > 0 ? generalCount : 1;
+            chartData.add(new PieChart.Data("Duyệt web an toàn (" + displayGen + ")", displayGen));
+        }
+
+        if (lblBlockedKpi != null) {
+            lblBlockedKpi.setText(dataService.getTotalBlockedEventsCount() + " lần");
+        }
+        if (lblOnlineDevicesKpi != null) {
+            lblOnlineDevicesKpi.setText(dataService.getOnlineDeviceCount() + " / " + dataService.getDevices().size());
+        }
+        if (lblViolationKpi != null) {
+            lblViolationKpi.setText(blockedCount + " lần");
+        }
+
+        if (eventsList != null) {
+            eventsList.getChildren().clear();
+            int max = Math.min(5, dataService.getAccessLogs().size());
+            for (int i = 0; i < max; i++) {
+                AccessLog log = dataService.getAccessLogs().get(i);
+                eventsList.getChildren().add(createEventRow(log));
+            }
+        }
     }
 
     private HBox createEventRow(AccessLog log) {

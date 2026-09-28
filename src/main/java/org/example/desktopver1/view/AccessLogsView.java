@@ -174,8 +174,23 @@ public class AccessLogsView extends VBox {
         searchField.textProperty().addListener((observable, oldValue, newValue) -> applyFilter());
         filterCombo.valueProperty().addListener((observable, oldValue, newValue) -> applyFilter());
 
+        // Tự động làm mới bảng TableView và số liệu footer khi có dữ liệu mới từ luồng ngầm VPS
+        dataService.getAccessLogs().addListener((javafx.collections.ListChangeListener<AccessLog>) c -> {
+            javafx.application.Platform.runLater(() -> {
+                tableView.refresh();
+                updateFooterStats();
+            });
+        });
+
         tableView.setItems(filteredData);
         updateFooterStats();
+    }
+
+    public void refresh() {
+        javafx.application.Platform.runLater(() -> {
+            tableView.refresh();
+            updateFooterStats();
+        });
     }
 
     private void applyFilter() {

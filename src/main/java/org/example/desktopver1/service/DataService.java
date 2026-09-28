@@ -155,6 +155,25 @@ public class DataService {
         }
     }
 
+    public void removeDevice(Device device) {
+        if (device == null) return;
+        devices.remove(device);
+        dbManager.deleteDevice(device.getId());
+        addSystemLog("Đã xóa thiết bị: " + device.getName(), device.getName(), "CẢNH BÁO");
+        if (vpsClient != null) {
+            syncFullStateToVps();
+        }
+    }
+
+    public void clearAllDevices() {
+        devices.clear();
+        dbManager.clearAllDevices();
+        addSystemLog("Đã dọn sạch toàn bộ thiết bị", "Hệ thống", "CẢNH BÁO");
+        if (vpsClient != null) {
+            syncFullStateToVps();
+        }
+    }
+
     public void addBlacklistDomain(String domain) {
         String clean = domain.trim().toLowerCase().replaceAll("^https?://", "").replaceAll("/.*", "");
         if (!clean.isEmpty() && !blacklistDomains.contains(clean)) {
@@ -226,6 +245,38 @@ public class DataService {
         dbManager.insertAccessLog(log);
     }
 
+    /**
+     * Nạp danh sách nhật ký phân tích từ VPS vào SQLite và danh sách ObservableList trên UI
+     */
+    public void addAccessLogs(List<AccessLog> logs) {
+        if (logs == null || logs.isEmpty()) return;
+        dbManager.insertAccessLogs(logs);
+
+        try {
+            if (javafx.application.Platform.isFxApplicationThread()) {
+                accessLogs.addAll(0, logs);
+            } else {
+                javafx.application.Platform.runLater(() -> accessLogs.addAll(0, logs));
+            }
+        } catch (IllegalStateException e) {
+            accessLogs.addAll(0, logs);
+        }
+    }
+
+    public String findDeviceNameByIp(String ip) {
+        if (ip == null || ip.trim().isEmpty()) return "Thiết bị không xác định";
+        String cleanIp = ip.trim();
+        for (Device d : devices) {
+            if (cleanIp.equalsIgnoreCase(d.getIpAddress())) {
+                return d.getName();
+            }
+        }
+        if ("10.0.0.2".equals(cleanIp)) {
+            return "Điện thoại con (WireGuard)";
+        }
+        return "Thiết bị (" + cleanIp + ")";
+    }
+
     public void clearLogs() {
         accessLogs.clear();
         dbManager.clearAllLogs();
@@ -235,6 +286,12 @@ public class DataService {
 
     public DatabaseManager getDatabaseManager() {
         return dbManager;
+    }
+
+    public void requestCreateWireGuardPeer(String deviceName, String deviceType) {
+        if (vpsClient != null) {
+            vpsClient.sendCreateWireGuardPeer(deviceName, deviceType);
+        }
     }
 
     public boolean isProtectionActive() {

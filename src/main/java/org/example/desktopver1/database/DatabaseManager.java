@@ -147,6 +147,14 @@ public class DatabaseManager {
      * Nạp dữ liệu giả lập mẫu vào SQLite nếu cơ sở dữ liệu còn trống
      */
     public void seedMockDataIfEmpty(Connection conn) throws SQLException {
+        // Kiểm tra xem đã từng seed dữ liệu hoặc người dùng đã chủ động làm sạch database chưa
+        try (Statement checkStmt = conn.createStatement();
+             ResultSet rs = checkStmt.executeQuery("SELECT value FROM system_settings WHERE key = 'mock_seeded'")) {
+            if (rs.next() && "true".equalsIgnoreCase(rs.getString("value"))) {
+                return; // Đã từng nạp mẫu hoặc người dùng đã chủ động thiết lập/xóa trắng
+            }
+        }
+
         // Kiểm tra xem có thiết bị nào chưa
         try (Statement checkStmt = conn.createStatement();
              ResultSet rs = checkStmt.executeQuery("SELECT COUNT(*) FROM devices")) {
@@ -157,6 +165,10 @@ public class DatabaseManager {
 
         // 1. Cài đặt hệ thống
         try (PreparedStatement ps = conn.prepareStatement("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)")) {
+            ps.setString(1, "mock_seeded");
+            ps.setString(2, "true");
+            ps.executeUpdate();
+
             ps.setString(1, "protection_active");
             ps.setString(2, "true");
             ps.executeUpdate();
@@ -368,6 +380,25 @@ public class DatabaseManager {
         }
     }
 
+    public void deleteDevice(String id) {
+        String sql = "DELETE FROM devices WHERE id = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void clearAllDevices() {
+        String sql = "DELETE FROM devices";
+        try (Connection conn = getConnection(); Statement st = conn.createStatement()) {
+            st.executeUpdate(sql);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
     public List<CategoryRule> getAllCategoryRules() {
         List<CategoryRule> list = new ArrayList<>();
         String sql = "SELECT * FROM category_rules ORDER BY id ASC";
@@ -501,6 +532,36 @@ public class DatabaseManager {
             ps.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void insertAccessLogs(List<AccessLog> logs) {
+        if (logs == null || logs.isEmpty()) return;
+        String sql = "INSERT OR REPLACE INTO access_logs (id, timestamp, device_name, domain, category, action, reason) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        try (Connection conn = getConnection()) {
+            boolean originalAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                for (AccessLog log : logs) {
+                    ps.setString(1, log.getId());
+                    ps.setString(2, log.getTimestamp());
+                    ps.setString(3, log.getDeviceName());
+                    ps.setString(4, log.getDomain());
+                    ps.setString(5, log.getCategory());
+                    ps.setString(6, log.getAction());
+                    ps.setString(7, log.getReason());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(originalAutoCommit);
+            }
+        } catch (SQLException e) {
+            System.err.println("[DatabaseManager] Lỗi lưu batch access_logs: " + e.getMessage());
         }
     }
 

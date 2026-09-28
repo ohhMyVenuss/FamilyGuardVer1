@@ -237,6 +237,17 @@ std::vector<unsigned char> make_refused_response(const unsigned char* query, std
     return response;
 }
 
+std::string exec_command(const std::string& cmd) {
+    std::array<char, 512> buffer;
+    std::string result;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    if (!pipe) return "{\"success\":false,\"error\":\"popen failed\"}";
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
+
 // ============================================================================
 // XỬ LÝ LỆNH JSON TỪ PHẦN MỀM PHỤ HUYNH JAVAFX (TCP IPC CỔNG 9000)
 // ============================================================================
@@ -492,6 +503,74 @@ json handle_command(const json& command) {
             whitelist.insert(domain);
         }
         return {{"success", true}, {"action", action}, {"domain", domain}, {"operation", op}};
+    }
+
+    // 13. Tự động hóa cấp cấu hình WireGuard (CREATE_WIREGUARD_PEER)
+    if (action == "CREATE_WIREGUARD_PEER") {
+        std::string device_name = "ThietBiCon";
+        if (command.contains("deviceName") && command["deviceName"].is_string()) {
+            device_name = command["deviceName"].get<std::string>();
+        } else if (command.contains("device_name") && command["device_name"].is_string()) {
+            device_name = command["device_name"].get<std::string>();
+        }
+
+        std::string device_type = "Điện thoại";
+        if (command.contains("deviceType") && command["deviceType"].is_string()) {
+            device_type = command["deviceType"].get<std::string>();
+        }
+
+        // Loại bỏ ký tự đặc biệt nguy hiểm trước khi đưa vào command
+        std::string safe_name;
+        for (char c : device_name) {
+            if (c == '"' || c == '\'' || c == ';' || c == '`' || c == '$' || c == '\\') continue;
+            safe_name.push_back(c);
+        }
+        if (safe_name.empty()) safe_name = "ThietBiCon";
+
+        std::string cmd = "python3 /opt/familyguard/wg_manager.py create \"" + safe_name + "\" 2>&1";
+        std::string output = exec_command(cmd);
+
+        json py_res = json::parse(output, nullptr, false);
+        if (py_res.is_discarded() || !py_res.value("success", false)) {
+            std::string err = py_res.is_discarded() ? ("Loi thuc thi: " + output) : py_res.value("error", "Loi tao WireGuard peer");
+            std::cerr << "[WIREGUARD] Lỗi tạo peer: " << err << std::endl;
+            return {
+                {"success", false},
+                {"action", "CREATE_WIREGUARD_PEER"},
+                {"error", err}
+            };
+        }
+
+        std::string assigned_ip = py_res.value("assigned_ip", "");
+        std::string config_text = py_res.value("config_text", "");
+        std::string qr_base64 = py_res.value("qr_base64", "");
+
+        std::cout << "[WIREGUARD] Đã tạo thành công cấu hình cho thiết bị: " << safe_name 
+                  << " (IP: " << assigned_ip << ")" << std::endl;
+
+        return {
+            {"success", true},
+            {"action", "CREATE_WIREGUARD_PEER"},
+            {"deviceName", safe_name},
+            {"deviceType", device_type},
+            {"assignedIp", assigned_ip},
+            {"configText", config_text},
+            {"qrBase64", qr_base64},
+            {"message", "Tạo cấu hình WireGuard thành công"}
+        };
+    }
+
+    // 14. Ghi nhận thiết bị mới từ JavaFX (ADD_DEVICE)
+    if (action == "ADD_DEVICE") {
+        std::string dev_name = command.value("name", "Unknown");
+        std::string dev_ip = command.value("ip", "");
+        std::cout << "[DEVICE] Ghi nhận thiết bị mới từ JavaFX: " << dev_name << " (" << dev_ip << ")" << std::endl;
+        return {
+            {"success", true},
+            {"action", "ADD_DEVICE"},
+            {"name", dev_name},
+            {"ip", dev_ip}
+        };
     }
 
     std::cerr << "[CONTROL] UNKNOWN_ACTION: " << action << std::endl;

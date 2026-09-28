@@ -110,7 +110,7 @@ Tệp JAR sau khi đóng gói sẽ nằm tại `target/DesktopVer1-1.0-SNAPSHOT.
 $env:JAVA_HOME = "C:\Program Files\Java\jdk-24"
 .\mvnw.cmd test
 ```
-Hệ thống sẽ chạy toàn bộ 17 ca kiểm thử tự động trên `DatabaseManagerTest`, `DataServiceDatabaseTest`, `JsonUtilTest` và `VpsClientServiceTest`.
+Hệ thống sẽ chạy toàn bộ 18 ca kiểm thử tự động trên `DatabaseManagerTest`, `DataServiceDatabaseTest`, `JsonUtilTest` và `VpsClientServiceTest` (bao gồm kiểm thử Gson parse SYNC_LOGS và lưu trữ SQLite).
 
 ---
 

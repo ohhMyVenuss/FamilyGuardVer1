@@ -50,6 +50,8 @@ mkdir -p /etc/wireguard
 # Copy mã nguồn từ thư mục script
 cp "$SCRIPT_DIR/dns_forwarder.cpp" /opt/familyguard/
 cp "$SCRIPT_DIR/http_block_server.py" /opt/familyguard/
+cp "$SCRIPT_DIR/wg_manager.py" /opt/familyguard/
+chmod +x /opt/familyguard/wg_manager.py
 
 # 4. Biên dịch mã nguồn C++ DNS Forwarder
 echo -e "\n${YELLOW}[4/7] Đang biên dịch dns_forwarder bằng g++ (C++17, O2, pthread)...${NC}"
@@ -148,6 +150,9 @@ cd "$SCRIPT_DIR"
 
 # 6. Thiết lập Systemd Service tự động chạy 24/7
 echo -e "\n${YELLOW}[6/7] Đang dọn dẹp tiến trình cũ và cài đặt Systemd Services...${NC}"
+systemctl stop dns-forwarder.service 2>/dev/null || true
+systemctl disable dns-forwarder.service 2>/dev/null || true
+rm -f /etc/systemd/system/dns-forwarder.service 2>/dev/null || true
 systemctl stop familyguard.service 2>/dev/null || true
 systemctl stop familyguard-http.service 2>/dev/null || true
 pkill -9 -f dns_forwarder 2>/dev/null || true
