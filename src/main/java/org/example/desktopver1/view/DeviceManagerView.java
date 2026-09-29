@@ -60,6 +60,14 @@ public class DeviceManagerView extends ScrollPane {
             });
         }
 
+        // Tự động làm mới danh sách thiết bị và cập nhật thời gian sử dụng khi có sự kiện mạng
+        dataService.getAccessLogs().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.AccessLog>) c -> {
+            javafx.application.Platform.runLater(this::refreshDevicesList);
+        });
+        dataService.getDevices().addListener((javafx.collections.ListChangeListener<Device>) c -> {
+            javafx.application.Platform.runLater(this::refreshDevicesList);
+        });
+
         setFitToWidth(true);
         setStyle("-fx-background-color: transparent; -fx-background: transparent;");
 
@@ -97,8 +105,9 @@ public class DeviceManagerView extends ScrollPane {
         Button btnScan = new Button("🔍 Quét mạng LAN");
         btnScan.getStyleClass().add("btn-outline");
         btnScan.setOnAction(e -> {
-            toastNotifier.accept("Đang quét dải mạng 192.168.1.0/24... Hiện có " + dataService.getDevices().size() + " thiết bị.");
+            dataService.recalculateAllDevicesUsageTime();
             refreshDevicesList();
+            toastNotifier.accept("Đang quét dải mạng 192.168.1.0/24 & cập nhật thời gian sử dụng các thiết bị.");
         });
 
         Button btnAddManual = new Button("+ Thêm thủ công");
@@ -155,11 +164,42 @@ public class DeviceManagerView extends ScrollPane {
         lblIp.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
         Label lblMac = new Label("MAC: " + device.getMacAddress());
         lblMac.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
-        Label lblTime = new Label("Hôm nay: " + device.getTimeSpentToday());
+        
+        // Thời gian sử dụng liên kết tự động với Property để cập nhật giao diện thời gian thực
+        Label lblTime = new Label();
+        lblTime.textProperty().bind(javafx.beans.binding.Bindings.concat("Hôm nay: ", device.timeSpentTodayProperty()));
         lblTime.setStyle("-fx-font-size: 11px; -fx-font-weight: 600; -fx-text-fill: #2563EB;");
         netMeta.getChildren().addAll(lblIp, lblMac, lblTime);
 
-        infoBox.getChildren().addAll(nameRow, netMeta);
+        // Hàng thống kê nhanh số trang web đã truy cập và trạng thái danh sách đen
+        DataService.DeviceStats stats = dataService.getDeviceStats(device);
+        HBox summaryRow = new HBox(8);
+        summaryRow.setAlignment(Pos.CENTER_LEFT);
+        summaryRow.setStyle("-fx-padding: 3 0 0 0;");
+
+        Label lblVisits = new Label("🌐 " + stats.getTotalVisits() + " web đã xem");
+        lblVisits.setStyle("-fx-font-size: 11px; -fx-text-fill: #475569;");
+
+        Label lblSafeBadge = new Label("🟢 " + stats.getSafeVisits() + " an toàn");
+        lblSafeBadge.setStyle("-fx-font-size: 10px; -fx-background-color: #ECFDF5; -fx-text-fill: #059669; -fx-padding: 2 6; -fx-background-radius: 4px; -fx-border-color: #A7F3D0; -fx-border-radius: 4px; -fx-font-weight: 600;");
+
+        Label lblBlacklistBadge = new Label("🛑 " + stats.getBlockedVisits() + " danh sách đen");
+        lblBlacklistBadge.setStyle("-fx-font-size: 10px; -fx-background-color: #FEE2E2; -fx-text-fill: #DC2626; -fx-padding: 2 6; -fx-background-radius: 4px; -fx-border-color: #FECACA; -fx-border-radius: 4px; -fx-font-weight: 600;");
+
+        summaryRow.getChildren().addAll(lblVisits, lblSafeBadge, lblBlacklistBadge);
+
+        infoBox.getChildren().addAll(nameRow, netMeta, summaryRow);
+
+        // Nút Theo dõi chi tiết các trang web truy cập
+        Button btnTrack = new Button("👁️ Theo dõi");
+        btnTrack.getStyleClass().add("btn-outline");
+        btnTrack.setStyle("-fx-font-size: 12px; -fx-padding: 8 14; -fx-text-fill: #2563EB; -fx-border-color: #93C5FD; -fx-cursor: hand; -fx-font-weight: 600;");
+        btnTrack.setTooltip(new Tooltip("Theo dõi lịch sử truy cập web và trạng thái an toàn của " + device.getName()));
+        btnTrack.setOnAction(e -> {
+            DeviceTrackingDialog dialog = new DeviceTrackingDialog(device, dataService, toastNotifier);
+            dialog.showAndWait();
+            refreshDevicesList();
+        });
 
         // Nút thao tác Khóa / Mở mạng cho thiết bị
         Button btnToggleBlock = new Button();
@@ -189,7 +229,7 @@ public class DeviceManagerView extends ScrollPane {
             });
         });
 
-        HBox actionsBox = new HBox(8, btnToggleBlock, btnDelete);
+        HBox actionsBox = new HBox(8, btnTrack, btnToggleBlock, btnDelete);
         actionsBox.setAlignment(Pos.CENTER_RIGHT);
 
         card.getChildren().addAll(lblIcon, infoBox, actionsBox);

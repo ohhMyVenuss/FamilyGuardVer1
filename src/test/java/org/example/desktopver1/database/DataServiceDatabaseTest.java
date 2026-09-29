@@ -145,4 +145,43 @@ class DataServiceDatabaseTest {
         assertNotNull(inDb);
         assertEquals("ĐÃ CHẶN", inDb.getAction());
     }
+
+    @Test
+    @DisplayName("Kiểm tra chức năng theo dõi từng thiết bị và đánh giá danh sách đen / an toàn")
+    void testDeviceTrackingAndSafetyAssessment() {
+        Device dev = dataService.getDevices().get(0);
+
+        AccessLog safeLog = new AccessLog("LOG-SAFE", "2026-09-28 10:00:00", dev.getName(), "hocmai.vn", "Học tập", "CHO PHÉP", "Website giáo dục");
+        AccessLog blockedLog = new AccessLog("LOG-BLOCKED", "2026-09-28 10:05:00", dev.getName(), "tiktok.com", "Mạng xã hội", "ĐÃ CHẶN", "Danh sách đen");
+        dataService.addAccessLog(safeLog);
+        dataService.addAccessLog(blockedLog);
+
+        assertFalse(dataService.isLogBlacklistedOrBlocked(safeLog));
+        assertTrue(dataService.isLogBlacklistedOrBlocked(blockedLog));
+
+        DataService.DeviceStats stats = dataService.getDeviceStats(dev);
+        assertTrue(stats.getTotalVisits() >= 2);
+        assertTrue(stats.getSafeVisits() >= 1);
+        assertTrue(stats.getBlockedVisits() >= 1);
+    }
+
+    @Test
+    @DisplayName("Kiểm tra tính toán và cập nhật lại thời gian sử dụng thiết bị hôm nay")
+    void testDeviceUsageTimeRecalculation() {
+        Device dev = new Device("DEV-TEST-TIME", "Máy Test Thời Gian", "Laptop", "10.0.0.99", "AA:BB:CC:11:22:33", "Trực tuyến", false, "0h 00m");
+        dataService.addDevice(dev);
+
+        String today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        AccessLog log1 = new AccessLog("L-1", today + " 08:00:00", dev.getName(), "google.com", "Tìm kiếm", "CHO PHÉP", "Hợp lệ");
+        AccessLog log2 = new AccessLog("L-2", today + " 08:10:00", dev.getName(), "youtube.com", "Giải trí", "CHO PHÉP", "Hợp lệ");
+        dataService.addAccessLog(log1);
+        dataService.addAccessLog(log2);
+
+        dataService.recalculateDeviceUsageTime(dev);
+        assertNotEquals("0h 00m", dev.getTimeSpentToday());
+
+        Device inDb = dbManager.getAllDevices().stream().filter(d -> d.getId().equals(dev.getId())).findFirst().orElse(null);
+        assertNotNull(inDb);
+        assertEquals(dev.getTimeSpentToday(), inDb.getTimeSpentToday());
+    }
 }

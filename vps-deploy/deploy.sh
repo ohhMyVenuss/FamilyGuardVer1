@@ -32,7 +32,7 @@ fi
 # 1. Cập nhật hệ thống và cài đặt gói phụ thuộc
 echo -e "\n${YELLOW}[1/7] Đang cập nhật gói và cài đặt thư viện cần thiết...${NC}"
 apt-get update -y
-apt-get install -y g++ nlohmann-json3-dev wireguard wireguard-tools iptables qrencode python3 curl net-tools
+apt-get install -y g++ nlohmann-json3-dev wireguard wireguard-tools iptables qrencode python3 curl net-tools conntrack
 
 # 2. Bật tính năng chuyển tiếp IP (IP Forwarding) trong nhân Linux
 echo -e "\n${YELLOW}[2/7] Đang cấu hình chuyển tiếp mạng (IPv4 Forwarding)...${NC}"

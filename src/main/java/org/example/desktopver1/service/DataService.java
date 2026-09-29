@@ -12,7 +12,10 @@ import org.example.desktopver1.model.TimeSchedule;
 
 import org.example.desktopver1.network.VpsClientService;
 
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -110,6 +113,8 @@ public class DataService {
         whitelistDomains.setAll(dbManager.getAllWhitelistDomains());
         accessLogs.setAll(dbManager.getAllAccessLogs());
         timeSchedules.setAll(dbManager.getAllTimeSchedules());
+
+        recalculateAllDevicesUsageTime();
     }
 
     // --- Các thao tác nghiệp vụ có đồng bộ SQLite ---
@@ -243,6 +248,7 @@ public class DataService {
     public void addAccessLog(AccessLog log) {
         accessLogs.add(0, log);
         dbManager.insertAccessLog(log);
+        recalculateAllDevicesUsageTime();
     }
 
     /**
@@ -261,6 +267,268 @@ public class DataService {
         } catch (IllegalStateException e) {
             accessLogs.addAll(0, logs);
         }
+        recalculateAllDevicesUsageTime();
+    }
+
+    public void runSafelyOnFx(Runnable r) {
+        try {
+            if (javafx.application.Platform.isFxApplicationThread()) {
+                r.run();
+            } else {
+                javafx.application.Platform.runLater(r);
+            }
+        } catch (IllegalStateException e) {
+            r.run();
+        }
+    }
+
+    /**
+     * Phân tích chuỗi thời gian nhật ký linh hoạt từ cả VPS và Client
+     */
+    public LocalDateTime parseLogTimestamp(String ts) {
+        if (ts == null || ts.trim().isEmpty()) return null;
+        ts = ts.trim();
+        try {
+            if (ts.length() >= 19 && ts.charAt(4) == '-' && ts.charAt(7) == '-') {
+                return LocalDateTime.parse(ts.substring(0, 19), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (ts.contains("-") && ts.contains("/")) {
+                String[] parts = ts.split(" - ");
+                if (parts.length == 2) {
+                    LocalTime time = LocalTime.parse(parts[0].trim(), DateTimeFormatter.ofPattern("HH:mm:ss"));
+                    String[] dateParts = parts[1].trim().split("/");
+                    int day = Integer.parseInt(dateParts[0]);
+                    int month = Integer.parseInt(dateParts[1]);
+                    int year = LocalDate.now().getYear();
+                    return LocalDateTime.of(year, month, day, time.getHour(), time.getMinute(), time.getSecond());
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /**
+     * Kiểm tra một bản ghi log có thuộc về thiết bị chỉ định hay không
+     */
+    public boolean isLogForDevice(AccessLog log, Device device) {
+        if (log == null || device == null) return false;
+        String devName = device.getName();
+        String devIp = device.getIpAddress();
+        String logDev = log.getDeviceName();
+        if (logDev == null) return false;
+        if (devName != null && !devName.trim().isEmpty() && logDev.equalsIgnoreCase(devName.trim())) {
+            return true;
+        }
+        if (devIp != null && !devIp.trim().isEmpty()) {
+            String cleanIp = devIp.trim();
+            if (logDev.equalsIgnoreCase("Thiết bị (" + cleanIp + ")")) {
+                return true;
+            }
+            if ("10.0.0.2".equals(cleanIp) && logDev.contains("Điện thoại con")) {
+                return true;
+            }
+            if (logDev.contains(cleanIp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Kiểm tra tên miền có nằm trong danh sách đen hay không
+     */
+    public boolean isDomainInBlacklist(String domain) {
+        if (domain == null || domain.trim().isEmpty()) return false;
+        String clean = domain.trim().toLowerCase().replaceAll("^https?://", "").replaceAll("/.*", "");
+        for (String bl : blacklistDomains) {
+            String blClean = bl.trim().toLowerCase();
+            if (clean.equals(blClean) || clean.endsWith("." + blClean) || clean.contains(blClean)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Kiểm tra một sự kiện truy cập web có bị chặn hoặc nằm trong danh sách đen hay không
+     */
+    public boolean isLogBlacklistedOrBlocked(AccessLog log) {
+        if (log == null) return false;
+        if ("ĐÃ CHẶN".equalsIgnoreCase(log.getAction())) return true;
+        return isDomainInBlacklist(log.getDomain());
+    }
+
+    /**
+     * Lấy toàn bộ danh sách nhật ký của thiết bị cụ thể
+     */
+    public ObservableList<AccessLog> getLogsForDevice(Device device) {
+        ObservableList<AccessLog> list = FXCollections.observableArrayList();
+        for (AccessLog log : accessLogs) {
+            if (isLogForDevice(log, device)) {
+                list.add(log);
+            }
+        }
+        return list;
+    }
+
+    /**
+     * Lớp DTO thống kê nhanh hoạt động của thiết bị
+     */
+    public static class DeviceStats {
+        private final int totalVisits;
+        private final int safeVisits;
+        private final int blockedVisits;
+        private final String lastDomain;
+        private final String lastTimestamp;
+        private final String timeSpentToday;
+
+        public DeviceStats(int totalVisits, int safeVisits, int blockedVisits, String lastDomain, String lastTimestamp, String timeSpentToday) {
+            this.totalVisits = totalVisits;
+            this.safeVisits = safeVisits;
+            this.blockedVisits = blockedVisits;
+            this.lastDomain = lastDomain;
+            this.lastTimestamp = lastTimestamp;
+            this.timeSpentToday = timeSpentToday;
+        }
+
+        public int getTotalVisits() { return totalVisits; }
+        public int getSafeVisits() { return safeVisits; }
+        public int getBlockedVisits() { return blockedVisits; }
+        public String getLastDomain() { return lastDomain; }
+        public String getLastTimestamp() { return lastTimestamp; }
+        public String getTimeSpentToday() { return timeSpentToday; }
+    }
+
+    /**
+     * Trích xuất các chỉ số giám sát an toàn cho từng thiết bị
+     */
+    public DeviceStats getDeviceStats(Device device) {
+        if (device == null) return new DeviceStats(0, 0, 0, "Chưa có", "Chưa có", "0h 00m");
+        int total = 0;
+        int safe = 0;
+        int blocked = 0;
+        String lastDom = "Chưa có";
+        String lastTs = "Chưa có";
+
+        for (AccessLog log : accessLogs) {
+            if (isLogForDevice(log, device)) {
+                total++;
+                if (isLogBlacklistedOrBlocked(log)) {
+                    blocked++;
+                } else {
+                    safe++;
+                }
+                if ("Chưa có".equals(lastDom) && log.getDomain() != null && !log.getDomain().trim().isEmpty()) {
+                    lastDom = log.getDomain();
+                    lastTs = log.getTimestamp();
+                }
+            }
+        }
+        return new DeviceStats(total, safe, blocked, lastDom, lastTs, device.getTimeSpentToday());
+    }
+
+    /**
+     * Tính toán và cập nhật lại thời gian sử dụng hôm nay của thiết bị dựa trên nhật ký truy vấn mạng
+     */
+    public void recalculateDeviceUsageTime(Device device) {
+        if (device == null) return;
+        LocalDate today = LocalDate.now();
+        List<LocalDateTime> times = new ArrayList<>();
+        boolean hasAnyLogForDevice = false;
+
+        for (AccessLog log : accessLogs) {
+            if (isLogForDevice(log, device)) {
+                hasAnyLogForDevice = true;
+                LocalDateTime ldt = parseLogTimestamp(log.getTimestamp());
+                if (ldt != null && ldt.toLocalDate().equals(today)) {
+                    times.add(ldt);
+                }
+            }
+        }
+
+        if (times.isEmpty()) {
+            if (!hasAnyLogForDevice && device.getTimeSpentToday() != null && !device.getTimeSpentToday().isEmpty() && !"0h 00m".equals(device.getTimeSpentToday())) {
+                return;
+            }
+            if (hasAnyLogForDevice) {
+                runSafelyOnFx(() -> {
+                    device.setTimeSpentToday("0h 00m");
+                    dbManager.updateDeviceTimeSpent(device.getId(), "0h 00m");
+                });
+            }
+            return;
+        }
+
+        times.sort(LocalDateTime::compareTo);
+        long totalSeconds = 0;
+        LocalDateTime sessionStart = times.get(0);
+        LocalDateTime lastInSession = times.get(0);
+
+        for (int i = 1; i < times.size(); i++) {
+            LocalDateTime current = times.get(i);
+            long gapSeconds = java.time.Duration.between(lastInSession, current).getSeconds();
+            if (gapSeconds <= 300) { // Trong vòng 5 phút tính là phiên liên tục
+                lastInSession = current;
+            } else {
+                long duration = Math.max(120, java.time.Duration.between(sessionStart, lastInSession).getSeconds());
+                totalSeconds += duration;
+                sessionStart = current;
+                lastInSession = current;
+            }
+        }
+        long duration = Math.max(120, java.time.Duration.between(sessionStart, lastInSession).getSeconds());
+        totalSeconds += duration;
+
+        long hours = totalSeconds / 3600;
+        long mins = (totalSeconds % 3600) / 60;
+        String formatted = String.format("%dh %02dm", hours, mins);
+
+        runSafelyOnFx(() -> {
+            device.setTimeSpentToday(formatted);
+            dbManager.updateDeviceTimeSpent(device.getId(), formatted);
+        });
+    }
+
+    /**
+     * Tính lại thời gian sử dụng cho tất cả các thiết bị
+     */
+    public void recalculateAllDevicesUsageTime() {
+        for (Device dev : devices) {
+            recalculateDeviceUsageTime(dev);
+        }
+    }
+
+    public double parseSpentHours(String timeSpentStr) {
+        if (timeSpentStr == null || timeSpentStr.trim().isEmpty()) return 0.0;
+        try {
+            String s = timeSpentStr.trim();
+            int h = 0;
+            int m = 0;
+            if (s.contains("h")) {
+                String[] hParts = s.split("h");
+                h = Integer.parseInt(hParts[0].trim());
+                if (hParts.length > 1 && hParts[1].contains("m")) {
+                    m = Integer.parseInt(hParts[1].replace("m", "").trim());
+                }
+            } else if (s.contains("m")) {
+                m = Integer.parseInt(s.replace("m", "").trim());
+            }
+            return h + (m / 60.0);
+        } catch (Exception e) {
+            return 0.0;
+        }
+    }
+
+    public String getTotalTimeSpentTodayFormatted() {
+        double totalH = 0.0;
+        for (Device d : devices) {
+            totalH += parseSpentHours(d.getTimeSpentToday());
+        }
+        int h = (int) totalH;
+        int m = (int) Math.round((totalH - h) * 60);
+        return String.format("%dh %02dm", h, m);
     }
 
     public String findDeviceNameByIp(String ip) {

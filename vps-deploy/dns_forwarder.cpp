@@ -134,6 +134,56 @@ bool is_curfew_active() {
     }
 }
 
+// ============================================================================
+// TƯỜNG LỬA LINUX IPTABLES (LAYER 3/4 FIREWALL - NGẮT MẠNG TRIỆT ĐỂ CHO APP & WEB)
+// ============================================================================
+
+bool is_valid_ipv4_address(const std::string& ip) {
+    if (ip.empty() || ip.size() > 15) return false;
+    int dots = 0;
+    for (char c : ip) {
+        if (c == '.') dots++;
+        else if (!isdigit(static_cast<unsigned char>(c))) return false;
+    }
+    return dots == 3;
+}
+
+void iptables_block_device(const std::string& ip) {
+    if (!is_valid_ipv4_address(ip)) return;
+    // 1. Thêm luật DROP vào chuỗi FORWARD (nếu chưa có) để chặn toàn bộ gói tin IP ra Internet
+    std::string check_cmd = "iptables -C FORWARD -s " + ip + " -j DROP 2>/dev/null";
+    if (system(check_cmd.c_str()) != 0) {
+        std::string add_cmd = "iptables -I FORWARD -s " + ip + " -j DROP";
+        system(add_cmd.c_str());
+    }
+    // 2. Xóa các phiên kết nối đang mở sẵn trong bảng conntrack của Kernel để cắt đứt tức thì app YouTube, Facebook, TikTok
+    std::string kill_conn = "conntrack -D -s " + ip + " 2>/dev/null";
+    system(kill_conn.c_str());
+    std::cout << "[FIREWALL] Đã kích hoạt iptables DROP & hủy conntrack cho IP: " << ip << std::endl;
+}
+
+void iptables_unblock_device(const std::string& ip) {
+    if (!is_valid_ipv4_address(ip)) return;
+    // Xóa sạch các luật DROP cho IP này trong FORWARD chain
+    std::string del_cmd = "while iptables -D FORWARD -s " + ip + " -j DROP 2>/dev/null; do :; done";
+    system(del_cmd.c_str());
+    std::cout << "[FIREWALL] Đã gỡ bỏ iptables DROP cho IP: " << ip << std::endl;
+}
+
+void iptables_set_emergency_pause(bool pause) {
+    if (pause) {
+        std::string check_cmd = "iptables -C FORWARD -i wg0 -j DROP 2>/dev/null";
+        if (system(check_cmd.c_str()) != 0) {
+            system("iptables -I FORWARD -i wg0 -j DROP");
+        }
+        system("conntrack -F 2>/dev/null");
+        std::cout << "[FIREWALL] Đã kích hoạt KHÓA MẠNG KHẨN CẤP (DROP toàn bộ wg0)" << std::endl;
+    } else {
+        system("while iptables -D FORWARD -i wg0 -j DROP 2>/dev/null; do :; done");
+        std::cout << "[FIREWALL] Đã HỦY khóa mạng khẩn cấp toàn hệ thống (mở lại wg0)" << std::endl;
+    }
+}
+
 void add_access_log(const std::string& domain,
                     const std::string& status,
                     const sockaddr_in& client) {
@@ -352,6 +402,7 @@ json handle_command(const json& command) {
         {
             std::unique_lock<std::shared_mutex> lock(state_mutex);
             emergency_pause = pause;
+            iptables_set_emergency_pause(pause);
         }
 
         std::cout << "[EMERGENCY] Chế độ khóa khẩn cấp: " << (pause ? "KÍCH HOẠT" : "HỦY") << std::endl;
@@ -374,9 +425,11 @@ json handle_command(const json& command) {
             std::unique_lock<std::shared_mutex> lock(state_mutex);
             if (blocked) {
                 blocked_client_ips.insert(ip);
-                std::cout << "[DEVICE_BLOCK] Đã ngắt mạng thiết bị IP: " << ip << std::endl;
+                iptables_block_device(ip);
+                std::cout << "[DEVICE_BLOCK] Đã ngắt mạng triệt để IP: " << ip << std::endl;
             } else {
                 blocked_client_ips.erase(ip);
+                iptables_unblock_device(ip);
                 std::cout << "[DEVICE_BLOCK] Đã khôi phục mạng cho thiết bị IP: " << ip << std::endl;
             }
         }
@@ -459,17 +512,32 @@ json handle_command(const json& command) {
             }
         }
         if (command.contains("blocked_ips") && command["blocked_ips"].is_array()) {
-            blocked_client_ips.clear();
+            std::unordered_set<std::string> new_blocked;
             for (const auto& item : command["blocked_ips"]) {
                 if (item.is_string()) {
-                    blocked_client_ips.insert(item.get<std::string>());
+                    new_blocked.insert(item.get<std::string>());
                 }
             }
+            // Gỡ bỏ luật tường lửa cho các IP không còn nằm trong danh sách chặn
+            for (const auto& old_ip : blocked_client_ips) {
+                if (new_blocked.find(old_ip) == new_blocked.end()) {
+                    iptables_unblock_device(old_ip);
+                }
+            }
+            // Kích hoạt tường lửa iptables cho các IP bị chặn
+            for (const auto& ip : new_blocked) {
+                iptables_block_device(ip);
+            }
+            blocked_client_ips = new_blocked;
+        }
+        if (command.contains("emergency_pause") && command["emergency_pause"].is_boolean()) {
+            emergency_pause = command["emergency_pause"].get<bool>();
+            iptables_set_emergency_pause(emergency_pause);
         }
         std::cout << "[SYNC_RULES] Đã đồng bộ từ JavaFX: " 
                   << blacklist.size() << " tên miền cấm, " 
                   << whitelist.size() << " tên miền học tập, " 
-                  << blocked_client_ips.size() << " IP bị chặn." << std::endl;
+                  << blocked_client_ips.size() << " IP bị chặn tường lửa." << std::endl;
         return {
             {"success", true},
             {"action", "SYNC_RULES"},

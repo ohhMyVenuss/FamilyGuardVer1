@@ -359,6 +359,17 @@ public class DatabaseManager {
         }
     }
 
+    public void updateDeviceTimeSpent(String id, String timeSpent) {
+        String sql = "UPDATE devices SET time_spent_today = ? WHERE id = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, timeSpent);
+            ps.setString(2, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
     public void updateDeviceBlock(String id, boolean blocked) {
         String sql = "UPDATE devices SET is_blocked = ? WHERE id = ?";
         try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {

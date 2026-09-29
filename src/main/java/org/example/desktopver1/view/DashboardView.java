@@ -38,6 +38,7 @@ public class DashboardView extends ScrollPane {
     private Label lblBlockedKpi;
     private Label lblOnlineDevicesKpi;
     private Label lblViolationKpi;
+    private Label lblTodayOnlineTime;
     private VBox eventsList;
 
     public DashboardView(DataService dataService, Consumer<String> toastNotifier, Runnable navigateToLogs) {
@@ -161,7 +162,9 @@ public class DashboardView extends ScrollPane {
         col4.setPercentWidth(25);
         grid.getColumnConstraints().addAll(col1, col2, col3, col4);
 
-        grid.add(createKpiCard("⏱️", "Thời gian online hôm nay", "3h 45m", "Hạn mức cho phép: 4h00m", false), 0, 0);
+        lblTodayOnlineTime = new Label(dataService.getTotalTimeSpentTodayFormatted());
+        lblTodayOnlineTime.getStyleClass().add("kpi-value");
+        grid.add(createKpiCardWithLabel("⏱️", "Thời gian online hôm nay", lblTodayOnlineTime, "Tổng thời lượng các thiết bị", false), 0, 0);
 
         lblBlockedKpi = new Label(dataService.getTotalBlockedEventsCount() + " lần");
         lblBlockedKpi.getStyleClass().add("kpi-value");
@@ -303,6 +306,9 @@ public class DashboardView extends ScrollPane {
             chartData.add(new PieChart.Data("Duyệt web an toàn (" + displayGen + ")", displayGen));
         }
 
+        if (lblTodayOnlineTime != null) {
+            lblTodayOnlineTime.setText(dataService.getTotalTimeSpentTodayFormatted());
+        }
         if (lblBlockedKpi != null) {
             lblBlockedKpi.setText(dataService.getTotalBlockedEventsCount() + " lần");
         }

@@ -186,14 +186,39 @@ public class TimeManagementView extends ScrollPane {
         head.getChildren().addAll(titleBox, sp, btnBonusTime);
 
         VBox trackerList = new VBox(14);
-        trackerList.getChildren().addAll(
-                createDeviceProgressRow("PC Phòng Học - Bé Minh", "2h 45m / 3h 00m", 0.91, true),
-                createDeviceProgressRow("iPad Pro - Bé Lan", "1h 15m / 3h 00m", 0.41, false),
-                createDeviceProgressRow("Laptop Asus - Học Tập", "1h 50m / 3h 00m", 0.61, false)
-        );
+        refreshTrackerList(trackerList);
+
+        // Lắng nghe để cập nhật tiến độ sử dụng thời gian của các thiết bị theo thời gian thực
+        dataService.getAccessLogs().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.AccessLog>) c -> {
+            javafx.application.Platform.runLater(() -> refreshTrackerList(trackerList));
+        });
+        dataService.getDevices().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.Device>) c -> {
+            javafx.application.Platform.runLater(() -> refreshTrackerList(trackerList));
+        });
 
         card.getChildren().addAll(head, new Separator(), trackerList);
         return card;
+    }
+
+    private void refreshTrackerList(VBox trackerList) {
+        trackerList.getChildren().clear();
+        double dailyLimitHours = 3.0;
+        if (dataService.getTimeSchedules() != null && !dataService.getTimeSchedules().isEmpty()) {
+            dailyLimitHours = dataService.getTimeSchedules().get(0).getDailyLimitHours();
+        }
+        if (dataService.getDevices().isEmpty()) {
+            Label empty = new Label("Chưa có thiết bị nào được kết nối trong hệ thống.");
+            empty.setStyle("-fx-text-fill: #64748B; -fx-font-size: 12px;");
+            trackerList.getChildren().add(empty);
+            return;
+        }
+        for (org.example.desktopver1.model.Device dev : dataService.getDevices()) {
+            double spent = dataService.parseSpentHours(dev.getTimeSpentToday());
+            double progress = Math.min(1.0, spent / Math.max(0.1, dailyLimitHours));
+            boolean isWarning = progress >= 0.85;
+            String timeStr = dev.getTimeSpentToday() + " / " + String.format("%.1fh", dailyLimitHours);
+            trackerList.getChildren().add(createDeviceProgressRow(dev.getName(), timeStr, progress, isWarning));
+        }
     }
 
     private VBox createDeviceProgressRow(String deviceName, String timeStr, double progress, boolean isWarning) {

@@ -99,6 +99,30 @@ def handle_client(client_socket, client_address):
                     log(f"[{ip}] Nhận lệnh thao tác từ Phụ Huynh: {action}", "CMD")
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
+                    # Tường lửa Linux iptables tầng Layer 3/4
+                    import subprocess, re
+                    if action == "DEVICE_BLOCK":
+                        dev_ip = payload.get("ip")
+                        blocked = payload.get("blocked", True)
+                        if dev_ip and re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", dev_ip):
+                            if blocked:
+                                subprocess.run(f"iptables -C FORWARD -s {dev_ip} -j DROP 2>/dev/null || iptables -I FORWARD -s {dev_ip} -j DROP", shell=True)
+                                subprocess.run(f"conntrack -D -s {dev_ip} 2>/dev/null", shell=True)
+                                log(f"[FIREWALL] Đã DROP gói tin & xóa conntrack IP: {dev_ip}", "CMD")
+                            else:
+                                subprocess.run(f"while iptables -D FORWARD -s {dev_ip} -j DROP 2>/dev/null; do :; done", shell=True)
+                                log(f"[FIREWALL] Đã mở lại FORWARD cho IP: {dev_ip}", "CMD")
+
+                    elif action == "EMERGENCY_PAUSE":
+                        pause = payload.get("paused", payload.get("enabled", True))
+                        if pause:
+                            subprocess.run("iptables -C FORWARD -i wg0 -j DROP 2>/dev/null || iptables -I FORWARD -i wg0 -j DROP", shell=True)
+                            subprocess.run("conntrack -F 2>/dev/null", shell=True)
+                            log("[FIREWALL] Đã kích hoạt KHÓA MẠNG KHẨN CẤP (DROP wg0)", "CMD")
+                        else:
+                            subprocess.run("while iptables -D FORWARD -i wg0 -j DROP 2>/dev/null; do :; done", shell=True)
+                            log("[FIREWALL] Đã mở lại mạng toàn hệ thống", "CMD")
+
                     resp = {
                         "status": "SUCCESS",
                         "action_ack": action,
