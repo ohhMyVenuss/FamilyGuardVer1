@@ -104,9 +104,14 @@ sudo ./deploy.sh
    - Khi thấy biểu tượng: `🟢 VPS: Đã kết nối VPS (Online)` hoặc `🟢 Đã xác thực`, nghĩa là đường truyền điều khiển đã thông suốt 100%!
 4. **Thử nghiệm các thao tác phụ huynh:**
    - **Thêm tên miền cấm:** Vào tab **🛡️ Bộ lọc nội dung**, nhập `facebook.com` hoặc `tiktok.com` và nhấn **Thêm chặn**. Lệnh `ADD_BLACKLIST` được gửi lên VPS trong 0.1 giây. Máy của trẻ sẽ bị chặn tức thì!
+   - **Quản lý 5 ứng dụng & Lưu lượng thời gian:** Ngay tại phần đầu tab **Bộ lọc nội dung**, phụ huynh có thể:
+     - Bật/Tắt chặn độc lập cho từng app trong 5 ứng dụng: **YouTube**, **Facebook**, **TikTok**, **Instagram**, **Mobile Legends: Bang Bang**.
+     - Đặt hạn mức thời gian dùng mỗi ngày (15m, 30m, 45m, 1h, 1.5h, 2h hoặc Không giới hạn).
+     - Xem thanh tiến độ thời gian thực (`Đã dùng: X phút / Y phút`). Khi hết giờ, VPS tự động trả mã `REFUSED` chặn ứng dụng hoạt động!
+     - Nút `🔄 Đặt lại` để gia hạn thêm giờ cho con khi cần.
    - **Gỡ tên miền:** Nhấn nút xóa cạnh tên miền, lệnh `REMOVE_BLACKLIST` gửi lên VPS và tên miền được mở lại.
    - **Khóa mạng khẩn cấp:** Tại Dashboard, nhấn nút đỏ `⚡ KHÓA MẠNG KHẨN CẤP`, toàn bộ DNS của con sẽ bị ngắt (RCODE REFUSED) cho đến khi phụ huynh mở lại.
-   - **Đồng bộ nhật ký:** Cứ mỗi 60 giây, VPS tự động gửi gói `SYNC_LOGS` chứa các truy cập mới nhất của con về máy bố mẹ, hiển thị trên bảng **📋 Nhật ký truy cập**.
+   - **Đồng bộ nhật ký & thời gian ứng dụng:** Cứ mỗi 60 giây, VPS tự động gửi gói `SYNC_LOGS` và `SYNC_APP_USAGE` chứa các truy cập và số giây đã dùng của từng app về máy bố mẹ.
 
 ---
 

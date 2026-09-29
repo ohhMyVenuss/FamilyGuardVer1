@@ -1,6 +1,7 @@
 package org.example.desktopver1.database;
 
 import org.example.desktopver1.model.AccessLog;
+import org.example.desktopver1.model.AppPolicy;
 import org.example.desktopver1.model.CategoryRule;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.model.TimeSchedule;
@@ -75,9 +76,16 @@ public class DatabaseManager {
                     mac_address TEXT NOT NULL,
                     status TEXT NOT NULL,
                     is_blocked INTEGER NOT NULL DEFAULT 0,
-                    time_spent_today TEXT NOT NULL
+                    time_spent_today TEXT NOT NULL,
+                    bonus_minutes INTEGER NOT NULL DEFAULT 0
                 );
             """);
+
+            try {
+                stmt.execute("ALTER TABLE devices ADD COLUMN bonus_minutes INTEGER NOT NULL DEFAULT 0");
+            } catch (SQLException ignored) {
+                // Cột bonus_minutes đã tồn tại
+            }
 
             // 3. Bảng quy tắc phân loại web
             stmt.execute("""
@@ -134,8 +142,25 @@ public class DatabaseManager {
                 );
             """);
 
+            // 8. Bảng kiểm soát và thời gian sử dụng 5 ứng dụng di động phổ biến
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS app_policies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    app_id TEXT NOT NULL,
+                    app_name TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    icon TEXT NOT NULL,
+                    target_ip TEXT NOT NULL DEFAULT '10.0.0.2',
+                    used_seconds INTEGER NOT NULL DEFAULT 0,
+                    time_limit_minutes INTEGER NOT NULL DEFAULT 60,
+                    is_blocked INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(app_id, target_ip)
+                );
+            """);
+
             // Tự động kiểm tra và thêm dữ liệu giả lập mẫu nếu bảng rỗng
             seedMockDataIfEmpty(conn);
+            seedAppPoliciesIfEmpty(conn);
 
         } catch (SQLException e) {
             System.err.println("[DatabaseManager] Lỗi khởi tạo SQLite: " + e.getMessage());
@@ -191,7 +216,7 @@ public class DatabaseManager {
                 "INSERT INTO devices (id, name, type, ip_address, mac_address, status, is_blocked, time_spent_today) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
             insertDeviceRow(ps, "DEV-01", "PC Phòng Học - Bé Minh", "Máy tính để bàn", "192.168.1.102", "3C:7C:3F:81:4A:22", "Trực tuyến", 0, "2h 45m");
             insertDeviceRow(ps, "DEV-02", "iPad Pro - Bé Lan", "Máy tính bảng", "192.168.1.108", "E4:5F:01:8B:3C:A2", "Trực tuyến", 0, "1h 15m");
-            insertDeviceRow(ps, "DEV-03", "Điện thoại Samsung - Minh", "Điện thoại", "192.168.1.115", "8A:92:B4:71:0D:33", "Ngoại tuyến", 0, "0h 30m");
+            insertDeviceRow(ps, "DEV-03", "Điện thoại con (WireGuard)", "Điện thoại", "10.0.0.2", "8A:92:B4:71:0D:33", "Trực tuyến", 0, "1h 10m");
             insertDeviceRow(ps, "DEV-04", "Laptop Asus - Học Tập", "Laptop", "192.168.1.120", "22:C4:6E:9A:1F:B8", "Trực tuyến", 0, "3h 10m");
         }
 
@@ -290,6 +315,57 @@ public class DatabaseManager {
         ps.executeUpdate();
     }
 
+    public void seedAppPoliciesIfEmpty(Connection conn) throws SQLException {
+        try (Statement checkStmt = conn.createStatement();
+             ResultSet rs = checkStmt.executeQuery("SELECT COUNT(*) FROM app_policies")) {
+            if (rs.next() && rs.getInt(1) > 0) {
+                return;
+            }
+        }
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT OR IGNORE INTO app_policies (app_id, app_name, category, icon, target_ip, used_seconds, time_limit_minutes, is_blocked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            // 1. Điện thoại con WireGuard (10.0.0.2)
+            insertAppPolicyRow(ps, "YOUTUBE", "YouTube", "Video & Giải trí", "YT", "10.0.0.2", 1500, 60, 0);
+            insertAppPolicyRow(ps, "FACEBOOK", "Facebook & Messenger", "Mạng xã hội", "FB", "10.0.0.2", 900, 45, 0);
+            insertAppPolicyRow(ps, "TIKTOK", "TikTok", "Video ngắn", "TT", "10.0.0.2", 1800, 30, 0);
+            insertAppPolicyRow(ps, "INSTAGRAM", "Instagram", "Mạng xã hội & Ảnh", "IG", "10.0.0.2", 600, 30, 0);
+            insertAppPolicyRow(ps, "MLBB", "Mobile Legends: Bang Bang", "Game MOBA Mobile", "ML", "10.0.0.2", 1200, 45, 0);
+
+            // 2. iPad Pro - Bé Lan (192.168.1.108)
+            insertAppPolicyRow(ps, "YOUTUBE", "YouTube", "Video & Giải trí", "YT", "192.168.1.108", 2400, 60, 0);
+            insertAppPolicyRow(ps, "FACEBOOK", "Facebook & Messenger", "Mạng xã hội", "FB", "192.168.1.108", 0, 45, 0);
+            insertAppPolicyRow(ps, "TIKTOK", "TikTok", "Video ngắn", "TT", "192.168.1.108", 900, 30, 0);
+            insertAppPolicyRow(ps, "INSTAGRAM", "Instagram", "Mạng xã hội & Ảnh", "IG", "192.168.1.108", 600, 30, 0);
+            insertAppPolicyRow(ps, "MLBB", "Mobile Legends: Bang Bang", "Game MOBA Mobile", "ML", "192.168.1.108", 0, 45, 0);
+
+            // 3. PC Phòng Học - Bé Minh (192.168.1.102)
+            insertAppPolicyRow(ps, "YOUTUBE", "YouTube", "Video & Giải trí", "YT", "192.168.1.102", 3000, 90, 0);
+            insertAppPolicyRow(ps, "FACEBOOK", "Facebook & Messenger", "Mạng xã hội", "FB", "192.168.1.102", 600, 45, 0);
+            insertAppPolicyRow(ps, "TIKTOK", "TikTok", "Video ngắn", "TT", "192.168.1.102", 0, 30, 0);
+            insertAppPolicyRow(ps, "INSTAGRAM", "Instagram", "Mạng xã hội & Ảnh", "IG", "192.168.1.102", 0, 30, 0);
+            insertAppPolicyRow(ps, "MLBB", "Mobile Legends: Bang Bang", "Game MOBA Mobile", "ML", "192.168.1.102", 0, 45, 0);
+
+            // 4. Laptop Asus - Học Tập (192.168.1.120)
+            insertAppPolicyRow(ps, "YOUTUBE", "YouTube", "Video & Giải trí", "YT", "192.168.1.120", 1800, 60, 0);
+            insertAppPolicyRow(ps, "FACEBOOK", "Facebook & Messenger", "Mạng xã hội", "FB", "192.168.1.120", 0, 45, 0);
+            insertAppPolicyRow(ps, "TIKTOK", "TikTok", "Video ngắn", "TT", "192.168.1.120", 0, 30, 0);
+            insertAppPolicyRow(ps, "INSTAGRAM", "Instagram", "Mạng xã hội & Ảnh", "IG", "192.168.1.120", 0, 30, 0);
+            insertAppPolicyRow(ps, "MLBB", "Mobile Legends: Bang Bang", "Game MOBA Mobile", "ML", "192.168.1.120", 0, 45, 0);
+        }
+    }
+
+    private void insertAppPolicyRow(PreparedStatement ps, String appId, String appName, String category, String icon, String targetIp, int usedSeconds, int timeLimitMinutes, int isBlocked) throws SQLException {
+        ps.setString(1, appId);
+        ps.setString(2, appName);
+        ps.setString(3, category);
+        ps.setString(4, icon);
+        ps.setString(5, targetIp);
+        ps.setInt(6, usedSeconds);
+        ps.setInt(7, timeLimitMinutes);
+        ps.setInt(8, isBlocked);
+        ps.executeUpdate();
+    }
+
     // ==========================================
     // CÁC THAO TÁC TRUY VẤN VÀ CẬP NHẬT (CRUD)
     // ==========================================
@@ -325,6 +401,10 @@ public class DatabaseManager {
         String sql = "SELECT * FROM devices ORDER BY id ASC";
         try (Connection conn = getConnection(); Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
+                int bonus = 0;
+                try {
+                    bonus = rs.getInt("bonus_minutes");
+                } catch (Exception ignored) {}
                 list.add(new Device(
                         rs.getString("id"),
                         rs.getString("name"),
@@ -333,7 +413,8 @@ public class DatabaseManager {
                         rs.getString("mac_address"),
                         rs.getString("status"),
                         rs.getInt("is_blocked") == 1,
-                        rs.getString("time_spent_today")
+                        rs.getString("time_spent_today"),
+                        bonus
                 ));
             }
         } catch (SQLException e) {
@@ -343,7 +424,7 @@ public class DatabaseManager {
     }
 
     public void saveDevice(Device d) {
-        String sql = "INSERT OR REPLACE INTO devices (id, name, type, ip_address, mac_address, status, is_blocked, time_spent_today) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT OR REPLACE INTO devices (id, name, type, ip_address, mac_address, status, is_blocked, time_spent_today, bonus_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, d.getId());
             ps.setString(2, d.getName());
@@ -353,6 +434,18 @@ public class DatabaseManager {
             ps.setString(6, d.getStatus());
             ps.setInt(7, d.isBlocked() ? 1 : 0);
             ps.setString(8, d.getTimeSpentToday());
+            ps.setInt(9, d.getBonusMinutes());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateDeviceBonusMinutes(String id, int bonusMinutes) {
+        String sql = "UPDATE devices SET bonus_minutes = ? WHERE id = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, bonusMinutes);
+            ps.setString(2, id);
             ps.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
@@ -604,6 +697,167 @@ public class DatabaseManager {
         return list;
     }
 
+    public void updateTimeScheduleLimits(double weekdayHours, double weekendHours) {
+        String sqlWeekday = "UPDATE time_schedules SET daily_limit_hours = ? WHERE day_group LIKE '%tuần%' OR day_group LIKE '%T2%' OR id = 1";
+        String sqlWeekend = "UPDATE time_schedules SET daily_limit_hours = ? WHERE day_group LIKE '%Cuối%' OR day_group LIKE '%T7%' OR id = 2";
+        try (Connection conn = getConnection()) {
+            try (PreparedStatement ps1 = conn.prepareStatement(sqlWeekday)) {
+                ps1.setDouble(1, weekdayHours);
+                ps1.executeUpdate();
+            }
+            try (PreparedStatement ps2 = conn.prepareStatement(sqlWeekend)) {
+                ps2.setDouble(1, weekendHours);
+                ps2.executeUpdate();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateTimeScheduleCurfew(boolean enabled, String startTime, String endTime) {
+        String sql = "UPDATE time_schedules SET is_active = ?, curfew_start = ?, curfew_end = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, enabled ? 1 : 0);
+            ps.setString(2, startTime);
+            ps.setString(3, endTime);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public List<AppPolicy> getAllAppPolicies() {
+        List<AppPolicy> list = new ArrayList<>();
+        String sql = "SELECT * FROM app_policies ORDER BY id ASC";
+        try (Connection conn = getConnection(); Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                list.add(new AppPolicy(
+                        rs.getString("app_id"),
+                        rs.getString("app_name"),
+                        rs.getString("category"),
+                        rs.getString("icon"),
+                        rs.getString("target_ip"),
+                        rs.getInt("used_seconds"),
+                        rs.getInt("time_limit_minutes"),
+                        rs.getInt("is_blocked") == 1
+                ));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return list;
+    }
+
+    public List<AppPolicy> getAppPoliciesForDevice(String targetIp) {
+        List<AppPolicy> list = new ArrayList<>();
+        if (targetIp == null || targetIp.trim().isEmpty()) {
+            return list;
+        }
+        String sql = "SELECT * FROM app_policies WHERE target_ip = ? ORDER BY id ASC";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, targetIp.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(new AppPolicy(
+                            rs.getString("app_id"),
+                            rs.getString("app_name"),
+                            rs.getString("category"),
+                            rs.getString("icon"),
+                            rs.getString("target_ip"),
+                            rs.getInt("used_seconds"),
+                            rs.getInt("time_limit_minutes"),
+                            rs.getInt("is_blocked") == 1
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return list;
+    }
+
+    public void ensureAppPoliciesForDevice(String targetIp) {
+        if (targetIp == null || targetIp.trim().isEmpty()) return;
+        String cleanIp = targetIp.trim();
+        String countSql = "SELECT COUNT(*) FROM app_policies WHERE target_ip = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(countSql)) {
+            ps.setString(1, cleanIp);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && rs.getInt(1) >= 5) {
+                    return; // Đã có đủ chính sách cho thiết bị này
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        String insertSql = "INSERT OR IGNORE INTO app_policies (app_id, app_name, category, icon, target_ip, used_seconds, time_limit_minutes, is_blocked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(insertSql)) {
+            insertAppPolicyRow(ps, "YOUTUBE", "YouTube", "Video & Giải trí", "YT", cleanIp, 0, 60, 0);
+            insertAppPolicyRow(ps, "FACEBOOK", "Facebook & Messenger", "Mạng xã hội", "FB", cleanIp, 0, 45, 0);
+            insertAppPolicyRow(ps, "TIKTOK", "TikTok", "Video ngắn", "TT", cleanIp, 0, 30, 0);
+            insertAppPolicyRow(ps, "INSTAGRAM", "Instagram", "Mạng xã hội & Ảnh", "IG", cleanIp, 0, 30, 0);
+            insertAppPolicyRow(ps, "MLBB", "Mobile Legends: Bang Bang", "Game MOBA Mobile", "ML", cleanIp, 0, 45, 0);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateAppPolicyBlock(String appId, String targetIp, boolean blocked) {
+        String sql = "UPDATE app_policies SET is_blocked = ? WHERE app_id = ? AND target_ip = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, blocked ? 1 : 0);
+            ps.setString(2, appId);
+            ps.setString(3, targetIp);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateAppPolicyLimit(String appId, String targetIp, int limitMinutes) {
+        String sql = "UPDATE app_policies SET time_limit_minutes = ? WHERE app_id = ? AND target_ip = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limitMinutes);
+            ps.setString(2, appId);
+            ps.setString(3, targetIp);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void resetAppPolicyUsage(String appId, String targetIp) {
+        String sql = appId != null && !appId.isEmpty()
+                ? "UPDATE app_policies SET used_seconds = 0 WHERE app_id = ? AND target_ip = ?"
+                : "UPDATE app_policies SET used_seconds = 0 WHERE target_ip = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (appId != null && !appId.isEmpty()) {
+                ps.setString(1, appId);
+                ps.setString(2, targetIp);
+            } else {
+                ps.setString(1, targetIp);
+            }
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateAppPolicyUsage(String appId, String targetIp, int usedSeconds, int limitMinutes, boolean isBlocked) {
+        String sql = "UPDATE app_policies SET used_seconds = ?, time_limit_minutes = ?, is_blocked = ? WHERE app_id = ? AND target_ip = ?";
+        try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, usedSeconds);
+            ps.setInt(2, limitMinutes);
+            ps.setInt(3, isBlocked ? 1 : 0);
+            ps.setString(4, appId);
+            ps.setString(5, targetIp);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
     /**
      * Dọn sạch toàn bộ database (Dùng cho unit test)
      */
@@ -616,6 +870,7 @@ public class DatabaseManager {
             stmt.execute("DROP TABLE IF EXISTS whitelist_domains");
             stmt.execute("DROP TABLE IF EXISTS access_logs");
             stmt.execute("DROP TABLE IF EXISTS time_schedules");
+            stmt.execute("DROP TABLE IF EXISTS app_policies");
         } catch (SQLException e) {
             e.printStackTrace();
         }

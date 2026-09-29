@@ -2,9 +2,12 @@ package org.example.desktopver1.view;
 
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import org.example.desktopver1.model.AppPolicy;
 import org.example.desktopver1.model.CategoryRule;
+import org.example.desktopver1.model.Device;
 import org.example.desktopver1.service.DataService;
 
 import java.util.function.Consumer;
@@ -33,7 +36,10 @@ public class ContentFilterView extends ScrollPane {
         // Tiêu đề
         contentBox.getChildren().add(createHeader());
 
-        // 1. Lọc theo danh mục nội dung
+        // 1. Quản lý 5 ứng dụng di động & thời lượng sử dụng
+        contentBox.getChildren().add(createAppControlSection());
+
+        // 2. Lọc theo danh mục nội dung
         contentBox.getChildren().add(createCategorySection());
 
         // 2. Hai cột: Blacklist và Whitelist
@@ -289,5 +295,319 @@ public class ContentFilterView extends ScrollPane {
 
         card.getChildren().addAll(cardTitle, new Separator(), opt1, opt2);
         return card;
+    }
+
+    private VBox createAppControlSection() {
+        VBox card = new VBox(16);
+        card.getStyleClass().add("card");
+
+        // Header của Card
+        HBox headerRow = new HBox(12);
+        headerRow.setAlignment(Pos.CENTER_LEFT);
+
+        VBox titleBox = new VBox(4);
+        Label cardTitle = new Label("📱 Quản Lý Quyền Truy Cập & Lưu Lượng Thời Gian 5 Ứng Dụng");
+        cardTitle.getStyleClass().add("card-title");
+        Label cardSub = new Label("Kiểm soát trực tiếp qua WireGuard VPN: Cho phép/Chặn hoặc giới hạn thời gian sử dụng mỗi ngày cho từng thiết bị.");
+        cardSub.getStyleClass().add("card-subtitle");
+        titleBox.getChildren().addAll(cardTitle, cardSub);
+        HBox.setHgrow(titleBox, Priority.ALWAYS);
+
+        Button btnResetAll = new Button("🔄 Đặt lại giờ tất cả App");
+        btnResetAll.getStyleClass().add("btn-outline");
+        btnResetAll.setStyle("-fx-font-size: 12px; -fx-padding: 6 12;");
+        btnResetAll.setOnAction(e -> {
+            dataService.resetAppUsage(null);
+            Device cur = dataService.getSelectedFilterDevice();
+            String devName = cur != null ? cur.getName() : "thiết bị";
+            toastNotifier.accept("Đã đặt lại thời gian sử dụng hôm nay cho 5 ứng dụng trên " + devName + "!");
+        });
+
+        headerRow.getChildren().addAll(titleBox, btnResetAll);
+
+        // Thanh chọn thiết bị đang theo dõi
+        HBox deviceBar = new HBox(14);
+        deviceBar.setAlignment(Pos.CENTER_LEFT);
+        deviceBar.setPadding(new Insets(10, 16, 10, 16));
+        deviceBar.setStyle("-fx-background-color: #F8FAFC; -fx-background-radius: 10px; -fx-border-color: #E2E8F0; -fx-border-radius: 10px;");
+
+        Label lblTarget = new Label("🎯 Chọn thiết bị theo dõi:");
+        lblTarget.setStyle("-fx-font-weight: bold; -fx-text-fill: #1E293B; -fx-font-size: 13px;");
+
+        ComboBox<Device> cbDeviceSelector = new ComboBox<>(dataService.getDevices());
+        cbDeviceSelector.setPrefWidth(350);
+        cbDeviceSelector.setStyle("-fx-font-size: 12px;");
+
+        javafx.util.Callback<ListView<Device>, ListCell<Device>> cellFactory = lv -> new ListCell<>() {
+            @Override
+            protected void updateItem(Device d, boolean empty) {
+                super.updateItem(d, empty);
+                if (empty || d == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    HBox row = new HBox(8);
+                    row.setAlignment(Pos.CENTER_LEFT);
+
+                    String icon = "10.0.0.2".equals(d.getIpAddress()) ? "📱" : ("Điện thoại".equalsIgnoreCase(d.getType()) ? "📱" : ("Máy tính bảng".equalsIgnoreCase(d.getType()) ? "📱" : "💻"));
+                    Label lblIcon = new Label(icon);
+
+                    Label lblName = new Label(d.getName());
+                    lblName.setStyle("-fx-font-weight: bold; -fx-text-fill: #1E293B;");
+
+                    Label lblIp = new Label("[" + d.getIpAddress() + "]");
+                    lblIp.setStyle("-fx-text-fill: #64748B; -fx-font-size: 11px;");
+
+                    Region spacer = new Region();
+                    HBox.setHgrow(spacer, Priority.ALWAYS);
+
+                    Label lblStatus = new Label("Trực tuyến".equalsIgnoreCase(d.getStatus()) ? "🟢 Online" : "⚪ Offline");
+                    lblStatus.setStyle("Trực tuyến".equalsIgnoreCase(d.getStatus())
+                            ? "-fx-text-fill: #16A34A; -fx-font-size: 10px; -fx-font-weight: bold; -fx-background-color: #DCFCE7; -fx-padding: 2 6; -fx-background-radius: 4;"
+                            : "-fx-text-fill: #94A3B8; -fx-font-size: 10px; -fx-padding: 2 6;");
+
+                    row.getChildren().addAll(lblIcon, lblName, lblIp, spacer, lblStatus);
+                    setGraphic(row);
+                }
+            }
+        };
+
+        cbDeviceSelector.setCellFactory(cellFactory);
+        cbDeviceSelector.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(Device d, boolean empty) {
+                super.updateItem(d, empty);
+                if (empty || d == null) {
+                    setText("Chọn thiết bị theo dõi...");
+                } else {
+                    String isWg = "10.0.0.2".equals(d.getIpAddress()) ? " • WireGuard Tunnel" : "";
+                    setText("📱 " + d.getName() + " (" + d.getIpAddress() + ")" + isWg);
+                }
+            }
+        });
+
+        Device initialDev = dataService.getSelectedFilterDevice();
+        if (initialDev != null) {
+            cbDeviceSelector.setValue(initialDev);
+        } else if (!dataService.getDevices().isEmpty()) {
+            cbDeviceSelector.setValue(dataService.getDevices().get(0));
+            dataService.setSelectedFilterDevice(dataService.getDevices().get(0));
+        }
+
+        cbDeviceSelector.setOnAction(e -> {
+            Device selected = cbDeviceSelector.getValue();
+            if (selected != null && (dataService.getSelectedFilterDevice() == null || !selected.getId().equals(dataService.getSelectedFilterDevice().getId()))) {
+                dataService.setSelectedFilterDevice(selected);
+                toastNotifier.accept("Đã chuyển cấu hình 5 ứng dụng sang: " + selected.getName() + " (" + selected.getIpAddress() + ")");
+            }
+        });
+
+        dataService.selectedFilterDeviceProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null && !newVal.equals(cbDeviceSelector.getValue())) {
+                cbDeviceSelector.setValue(newVal);
+            }
+        });
+
+        Region barSpacer = new Region();
+        HBox.setHgrow(barSpacer, Priority.ALWAYS);
+
+        Label lblHint = new Label("💡 Cấu hình hạn mức và đếm giờ áp dụng riêng biệt cho từng thiết bị.");
+        lblHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #475569; -fx-font-style: italic;");
+
+        deviceBar.getChildren().addAll(lblTarget, cbDeviceSelector, barSpacer, lblHint);
+
+        VBox appsList = new VBox(12);
+        for (AppPolicy policy : dataService.getAppPolicies()) {
+            appsList.getChildren().add(createAppItem(policy));
+        }
+
+        dataService.getAppPolicies().addListener((javafx.collections.ListChangeListener<AppPolicy>) c -> {
+            appsList.getChildren().clear();
+            for (AppPolicy policy : dataService.getAppPolicies()) {
+                appsList.getChildren().add(createAppItem(policy));
+            }
+        });
+
+        card.getChildren().addAll(headerRow, deviceBar, new Separator(), appsList);
+        return card;
+    }
+
+    private Node createAppBrandBadge(String appId, String fallbackIcon) {
+        StackPane badge = new StackPane();
+        badge.setPrefSize(46, 46);
+        badge.setMinSize(46, 46);
+        badge.setMaxSize(46, 46);
+
+        String id = appId != null ? appId.toUpperCase().trim() : "";
+        Label lblSymbol = new Label();
+        lblSymbol.setAlignment(Pos.CENTER);
+
+        switch (id) {
+            case "YOUTUBE":
+                badge.setStyle("-fx-background-color: #FF0000; -fx-background-radius: 12px; -fx-effect: dropshadow(three-pass-box, rgba(255,0,0,0.35), 6, 0, 0, 2);");
+                lblSymbol.setText("▶");
+                lblSymbol.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold; -fx-padding: 0 0 0 2;");
+                break;
+            case "FACEBOOK":
+                badge.setStyle("-fx-background-color: #1877F2; -fx-background-radius: 12px; -fx-effect: dropshadow(three-pass-box, rgba(24,119,242,0.35), 6, 0, 0, 2);");
+                lblSymbol.setText("f");
+                lblSymbol.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 24px; -fx-font-weight: 900; -fx-font-family: 'Arial Black', 'Arial', sans-serif;");
+                break;
+            case "TIKTOK":
+                badge.setStyle("-fx-background-color: #010101; -fx-background-radius: 12px; -fx-border-color: #00F2FE; -fx-border-width: 1.5px; -fx-border-radius: 12px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.45), 6, 0, 0, 2);");
+                lblSymbol.setText("♪");
+                lblSymbol.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 22px; -fx-font-weight: bold;");
+                break;
+            case "INSTAGRAM":
+                badge.setStyle("-fx-background-color: linear-gradient(to bottom right, #833AB4, #FD1D1D, #FCB045); -fx-background-radius: 12px; -fx-effect: dropshadow(three-pass-box, rgba(253,29,29,0.35), 6, 0, 0, 2);");
+                lblSymbol.setText("📷");
+                lblSymbol.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold;");
+                break;
+            case "MLBB":
+                badge.setStyle("-fx-background-color: linear-gradient(to bottom right, #0F172A, #1E293B); -fx-background-radius: 12px; -fx-border-color: #F59E0B; -fx-border-width: 1.5px; -fx-border-radius: 12px; -fx-effect: dropshadow(three-pass-box, rgba(245,158,11,0.35), 6, 0, 0, 2);");
+                lblSymbol.setText("⚔");
+                lblSymbol.setStyle("-fx-text-fill: #FBBF24; -fx-font-size: 20px; -fx-font-weight: bold;");
+                break;
+            default:
+                badge.setStyle("-fx-background-color: #3B82F6; -fx-background-radius: 12px;");
+                lblSymbol.setText(fallbackIcon != null && !fallbackIcon.isEmpty() ? fallbackIcon : "📱");
+                lblSymbol.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 16px;");
+                break;
+        }
+
+        badge.getChildren().add(lblSymbol);
+        return badge;
+    }
+
+    private HBox createAppItem(AppPolicy policy) {
+        HBox box = new HBox(16);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPadding(new Insets(14, 16, 14, 16));
+        box.setStyle("-fx-background-color: #F8FAFC; -fx-background-radius: 12px; -fx-border-color: #E2E8F0; -fx-border-radius: 12px;");
+
+        // 1. Icon & Tên ứng dụng
+        HBox appInfo = new HBox(14);
+        appInfo.setAlignment(Pos.CENTER_LEFT);
+        appInfo.setPrefWidth(230);
+
+        Node brandBadge = createAppBrandBadge(policy.getAppId(), policy.getIcon());
+
+        VBox nameBox = new VBox(3);
+        Label lblName = new Label(policy.getAppName());
+        lblName.setStyle("-fx-font-weight: bold; -fx-font-size: 14px; -fx-text-fill: #1E293B;");
+        Label lblCat = new Label(policy.getCategory());
+        lblCat.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
+        nameBox.getChildren().addAll(lblName, lblCat);
+
+        appInfo.getChildren().addAll(brandBadge, nameBox);
+
+        // 2. Thanh tiến độ sử dụng & Thời gian
+        VBox progressBox = new VBox(6);
+        HBox.setHgrow(progressBox, Priority.ALWAYS);
+
+        HBox statusRow = new HBox(8);
+        statusRow.setAlignment(Pos.CENTER_LEFT);
+
+        Label lblBadge = new Label();
+        Label lblTimeDetail = new Label();
+        lblTimeDetail.setStyle("-fx-font-size: 12px; -fx-text-fill: #334155;");
+
+        statusRow.getChildren().addAll(lblBadge, lblTimeDetail);
+
+        ProgressBar pbar = new ProgressBar(policy.getUsageProgress());
+        pbar.setMaxWidth(Double.MAX_VALUE);
+        pbar.setPrefHeight(10);
+
+        Runnable updateVisuals = () -> {
+            double prog = policy.getUsageProgress();
+            pbar.setProgress(prog);
+
+            if (policy.isBlocked()) {
+                lblBadge.setText("🚫 ĐÃ CHẶN");
+                lblBadge.setStyle("-fx-background-color: #FEE2E2; -fx-text-fill: #DC2626; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 8; -fx-background-radius: 6;");
+                pbar.setStyle("-fx-accent: #DC2626;");
+                lblTimeDetail.setText("Bố mẹ đã chặn hoàn toàn quyền truy cập");
+            } else if (policy.isTimeExceeded()) {
+                lblBadge.setText("⏳ HẾT GIỜ HÔM NAY");
+                lblBadge.setStyle("-fx-background-color: #FEF3C7; -fx-text-fill: #D97706; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 8; -fx-background-radius: 6;");
+                pbar.setStyle("-fx-accent: #F59E0B;");
+                lblTimeDetail.setText("Đã dùng: " + policy.getFormattedUsedTime() + " / Hạn mức: " + policy.getFormattedLimit());
+            } else {
+                lblBadge.setText("🟢 ĐANG HOẠT ĐỘNG");
+                lblBadge.setStyle("-fx-background-color: #DCFCE7; -fx-text-fill: #16A34A; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 8; -fx-background-radius: 6;");
+                pbar.setStyle(prog >= 0.75 ? "-fx-accent: #F59E0B;" : "-fx-accent: #10B981;");
+                lblTimeDetail.setText("Đã dùng: " + policy.getFormattedUsedTime() + " / Hạn mức: " + policy.getFormattedLimit() + " (" + policy.getStatusDescription() + ")");
+            }
+        };
+
+        updateVisuals.run();
+        policy.usedSecondsProperty().addListener((obs, o, n) -> updateVisuals.run());
+        policy.timeLimitMinutesProperty().addListener((obs, o, n) -> updateVisuals.run());
+        policy.blockedProperty().addListener((obs, o, n) -> updateVisuals.run());
+        policy.timeExceededProperty().addListener((obs, o, n) -> updateVisuals.run());
+
+        progressBox.getChildren().addAll(statusRow, pbar);
+
+        // 3. Tùy chọn Hạn mức thời gian & Nút chặn
+        HBox controlBox = new HBox(12);
+        controlBox.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox limitGroup = new VBox(2);
+        limitGroup.setAlignment(Pos.CENTER_LEFT);
+        Label lblLimitTitle = new Label("Hạn mức/ngày:");
+        lblLimitTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
+
+        ComboBox<String> cbLimit = new ComboBox<>();
+        cbLimit.getItems().addAll("15 phút", "30 phút", "45 phút", "60 phút (1h)", "90 phút (1.5h)", "120 phút (2h)", "180 phút (3h)", "Không giới hạn");
+        cbLimit.setStyle("-fx-font-size: 12px;");
+
+        int lim = policy.getTimeLimitMinutes();
+        if (lim == 15) cbLimit.setValue("15 phút");
+        else if (lim == 30) cbLimit.setValue("30 phút");
+        else if (lim == 45) cbLimit.setValue("45 phút");
+        else if (lim == 60) cbLimit.setValue("60 phút (1h)");
+        else if (lim == 90) cbLimit.setValue("90 phút (1.5h)");
+        else if (lim == 120) cbLimit.setValue("120 phút (2h)");
+        else if (lim == 180) cbLimit.setValue("180 phút (3h)");
+        else if (lim <= 0) cbLimit.setValue("Không giới hạn");
+        else cbLimit.setValue(lim + " phút");
+
+        cbLimit.setOnAction(e -> {
+            String sel = cbLimit.getValue();
+            int newMin = 60;
+            if ("15 phút".equals(sel)) newMin = 15;
+            else if ("30 phút".equals(sel)) newMin = 30;
+            else if ("45 phút".equals(sel)) newMin = 45;
+            else if ("60 phút (1h)".equals(sel)) newMin = 60;
+            else if ("90 phút (1.5h)".equals(sel)) newMin = 90;
+            else if ("120 phút (2h)".equals(sel)) newMin = 120;
+            else if ("180 phút (3h)".equals(sel)) newMin = 180;
+            else if ("Không giới hạn".equals(sel)) newMin = -1;
+            dataService.setAppTimeLimit(policy, newMin);
+            toastNotifier.accept("Đã đổi hạn mức " + policy.getAppName() + " thành: " + sel);
+        });
+        limitGroup.getChildren().addAll(lblLimitTitle, cbLimit);
+
+        CheckBox cbBlock = new CheckBox("Chặn");
+        cbBlock.setSelected(policy.isBlocked());
+        cbBlock.setStyle("-fx-font-weight: bold; -fx-text-fill: #DC2626; -fx-font-size: 13px;");
+        cbBlock.setOnAction(e -> {
+            dataService.toggleAppBlock(policy);
+            toastNotifier.accept((policy.isBlocked() ? "Đã bật chặn: " : "Đã cho phép: ") + policy.getAppName());
+        });
+
+        Button btnReset = new Button("🔄");
+        btnReset.setTooltip(new Tooltip("Đặt lại thời gian sử dụng hôm nay về 0"));
+        btnReset.getStyleClass().add("btn-outline");
+        btnReset.setStyle("-fx-padding: 4 8; -fx-font-size: 11px;");
+        btnReset.setOnAction(e -> {
+            dataService.resetAppUsage(policy);
+            toastNotifier.accept("Đã đặt lại thời gian hôm nay cho " + policy.getAppName());
+        });
+
+        controlBox.getChildren().addAll(limitGroup, cbBlock, btnReset);
+
+        box.getChildren().addAll(appInfo, progressBox, controlBox);
+        return box;
     }
 }

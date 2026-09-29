@@ -17,8 +17,13 @@ public class Device {
     private final StringProperty status; // "Trực tuyến", "Ngoại tuyến"
     private final BooleanProperty blocked; // Có bị ngắt mạng không
     private final StringProperty timeSpentToday;
+    private final javafx.beans.property.IntegerProperty bonusMinutes;
 
     public Device(String id, String name, String type, String ipAddress, String macAddress, String status, boolean blocked, String timeSpentToday) {
+        this(id, name, type, ipAddress, macAddress, status, blocked, timeSpentToday, 0);
+    }
+
+    public Device(String id, String name, String type, String ipAddress, String macAddress, String status, boolean blocked, String timeSpentToday, int bonusMinutes) {
         this.id = new SimpleStringProperty(id);
         this.name = new SimpleStringProperty(name);
         this.type = new SimpleStringProperty(type);
@@ -27,6 +32,7 @@ public class Device {
         this.status = new SimpleStringProperty(status);
         this.blocked = new SimpleBooleanProperty(blocked);
         this.timeSpentToday = new SimpleStringProperty(timeSpentToday);
+        this.bonusMinutes = new javafx.beans.property.SimpleIntegerProperty(bonusMinutes);
     }
 
     public String getId() {
@@ -107,5 +113,17 @@ public class Device {
 
     public StringProperty timeSpentTodayProperty() {
         return timeSpentToday;
+    }
+
+    public int getBonusMinutes() {
+        return bonusMinutes.get();
+    }
+
+    public void setBonusMinutes(int bonusMinutes) {
+        this.bonusMinutes.set(bonusMinutes);
+    }
+
+    public javafx.beans.property.IntegerProperty bonusMinutesProperty() {
+        return bonusMinutes;
     }
 }

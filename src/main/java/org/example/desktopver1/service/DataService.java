@@ -1,11 +1,14 @@
 package org.example.desktopver1.service;
 
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import org.example.desktopver1.database.DatabaseManager;
 import org.example.desktopver1.model.AccessLog;
+import org.example.desktopver1.model.AppPolicy;
 import org.example.desktopver1.model.CategoryRule;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.model.TimeSchedule;
@@ -42,9 +45,13 @@ public class DataService {
     private final BooleanProperty emergencyPause = new SimpleBooleanProperty(false);
     private final BooleanProperty safeSearchEnabled = new SimpleBooleanProperty(true);
 
+    // Thiết bị đang được chọn để cấu hình bộ lọc ứng dụng & lưu lượng
+    private final ObjectProperty<Device> selectedFilterDevice = new SimpleObjectProperty<>();
+
     // Danh sách dữ liệu tương tác giao diện
     private final ObservableList<Device> devices = FXCollections.observableArrayList();
     private final ObservableList<CategoryRule> categoryRules = FXCollections.observableArrayList();
+    private final ObservableList<AppPolicy> appPolicies = FXCollections.observableArrayList();
     private final ObservableList<String> blacklistDomains = FXCollections.observableArrayList();
     private final ObservableList<String> whitelistDomains = FXCollections.observableArrayList();
     private final ObservableList<AccessLog> accessLogs = FXCollections.observableArrayList();
@@ -109,6 +116,28 @@ public class DataService {
         // Dữ liệu danh sách
         devices.setAll(dbManager.getAllDevices());
         categoryRules.setAll(dbManager.getAllCategoryRules());
+
+        // Chọn thiết bị mặc định (Ưu tiên WireGuard 10.0.0.2 hoặc thiết bị đầu tiên)
+        Device initialDev = null;
+        for (Device d : devices) {
+            if ("10.0.0.2".equals(d.getIpAddress()) || (d.getName() != null && d.getName().contains("WireGuard"))) {
+                initialDev = d;
+                break;
+            }
+        }
+        if (initialDev == null && !devices.isEmpty()) {
+            initialDev = devices.get(0);
+        }
+        selectedFilterDevice.set(initialDev);
+
+        if (initialDev != null && initialDev.getIpAddress() != null) {
+            String ip = initialDev.getIpAddress().trim();
+            dbManager.ensureAppPoliciesForDevice(ip);
+            appPolicies.setAll(dbManager.getAppPoliciesForDevice(ip));
+        } else {
+            appPolicies.setAll(dbManager.getAllAppPolicies());
+        }
+
         blacklistDomains.setAll(dbManager.getAllBlacklistDomains());
         whitelistDomains.setAll(dbManager.getAllWhitelistDomains());
         accessLogs.setAll(dbManager.getAllAccessLogs());
@@ -238,6 +267,97 @@ public class DataService {
         }
     }
 
+    public ObservableList<AppPolicy> getAppPolicies() {
+        return appPolicies;
+    }
+
+    public Device getSelectedFilterDevice() {
+        return selectedFilterDevice.get();
+    }
+
+    public ObjectProperty<Device> selectedFilterDeviceProperty() {
+        return selectedFilterDevice;
+    }
+
+    public void setSelectedFilterDevice(Device device) {
+        if (device == null) return;
+        this.selectedFilterDevice.set(device);
+        loadAppPoliciesForDevice(device);
+    }
+
+    public void loadAppPoliciesForDevice(Device device) {
+        if (device == null || device.getIpAddress() == null) return;
+        String ip = device.getIpAddress().trim();
+        dbManager.ensureAppPoliciesForDevice(ip);
+        List<AppPolicy> list = dbManager.getAppPoliciesForDevice(ip);
+        runSafelyOnFx(() -> appPolicies.setAll(list));
+    }
+
+    public void toggleAppBlock(AppPolicy policy) {
+        if (policy == null) return;
+        boolean newState = !policy.isBlocked();
+        policy.setBlocked(newState);
+        dbManager.updateAppPolicyBlock(policy.getAppId(), policy.getTargetIp(), newState);
+        addSystemLog((newState ? "Chặn hoàn toàn ứng dụng: " : "Bỏ chặn ứng dụng: ") + policy.getAppName() + " (" + policy.getTargetIp() + ")", "Bộ lọc ứng dụng", newState ? "ĐÃ CHẶN" : "CHO PHÉP");
+        if (vpsClient != null) {
+            vpsClient.sendAppPolicyUpdate(policy.getTargetIp(), policy.getAppId(), policy.getTimeLimitMinutes(), newState);
+        }
+    }
+
+    public void setAppTimeLimit(AppPolicy policy, int limitMinutes) {
+        if (policy == null) return;
+        policy.setTimeLimitMinutes(limitMinutes);
+        dbManager.updateAppPolicyLimit(policy.getAppId(), policy.getTargetIp(), limitMinutes);
+        addSystemLog("Đặt hạn mức " + policy.getFormattedLimit() + " cho " + policy.getAppName() + " (" + policy.getTargetIp() + ")", "Quản lý lưu lượng giờ", "CẬP NHẬT");
+        if (vpsClient != null) {
+            vpsClient.sendAppPolicyUpdate(policy.getTargetIp(), policy.getAppId(), limitMinutes, policy.isBlocked());
+        }
+    }
+
+    public void resetAppUsage(AppPolicy policy) {
+        if (policy != null) {
+            policy.setUsedSeconds(0);
+            policy.setTimeExceeded(false);
+            dbManager.resetAppPolicyUsage(policy.getAppId(), policy.getTargetIp());
+            addSystemLog("Đặt lại thời gian sử dụng hôm nay cho " + policy.getAppName() + " (" + policy.getTargetIp() + ")", "Quản lý thời gian", "CHO PHÉP");
+            if (vpsClient != null) {
+                vpsClient.sendResetAppUsage(policy.getTargetIp(), policy.getAppId());
+            }
+        } else {
+            Device currentDev = selectedFilterDevice.get();
+            String targetIp = (currentDev != null && currentDev.getIpAddress() != null) ? currentDev.getIpAddress().trim() : "10.0.0.2";
+            for (AppPolicy p : appPolicies) {
+                p.setUsedSeconds(0);
+                p.setTimeExceeded(false);
+            }
+            dbManager.resetAppPolicyUsage(null, targetIp);
+            addSystemLog("Đặt lại thời gian sử dụng hôm nay cho toàn bộ 5 ứng dụng trên thiết bị (" + targetIp + ")", "Quản lý thời gian", "CHO PHÉP");
+            if (vpsClient != null) {
+                vpsClient.sendResetAppUsage(targetIp, "");
+            }
+        }
+    }
+
+    public void updateAppPolicyFromVps(String targetIp, String appId, int usedSeconds, int limitMinutes, boolean blocked) {
+        dbManager.updateAppPolicyUsage(appId, targetIp, usedSeconds, limitMinutes, blocked);
+        runSafelyOnFx(() -> {
+            Device currentDev = selectedFilterDevice.get();
+            String currentIp = currentDev != null ? currentDev.getIpAddress() : "10.0.0.2";
+            if (targetIp == null || targetIp.isEmpty() || targetIp.equalsIgnoreCase(currentIp)) {
+                for (AppPolicy p : appPolicies) {
+                    if (p.getAppId().equalsIgnoreCase(appId)) {
+                        p.setUsedSeconds(usedSeconds);
+                        if (limitMinutes >= 0) {
+                            p.setTimeLimitMinutes(limitMinutes);
+                        }
+                        p.setBlocked(blocked);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     public void addSystemLog(String description, String source, String action) {
         String now = LocalDateTime.now().format(timeFormatter);
         AccessLog log = new AccessLog("LOG-" + System.currentTimeMillis(), now, source, description, "Quản trị", action, "Thao tác phụ huynh");
@@ -246,9 +366,12 @@ public class DataService {
     }
 
     public void addAccessLog(AccessLog log) {
-        accessLogs.add(0, log);
+        if (log == null) return;
         dbManager.insertAccessLog(log);
-        recalculateAllDevicesUsageTime();
+        runSafelyOnFx(() -> {
+            accessLogs.add(0, log);
+            recalculateAllDevicesUsageTime();
+        });
     }
 
     /**
@@ -258,16 +381,10 @@ public class DataService {
         if (logs == null || logs.isEmpty()) return;
         dbManager.insertAccessLogs(logs);
 
-        try {
-            if (javafx.application.Platform.isFxApplicationThread()) {
-                accessLogs.addAll(0, logs);
-            } else {
-                javafx.application.Platform.runLater(() -> accessLogs.addAll(0, logs));
-            }
-        } catch (IllegalStateException e) {
+        runSafelyOnFx(() -> {
             accessLogs.addAll(0, logs);
-        }
-        recalculateAllDevicesUsageTime();
+            recalculateAllDevicesUsageTime();
+        });
     }
 
     public void runSafelyOnFx(Runnable r) {
@@ -488,6 +605,7 @@ public class DataService {
         runSafelyOnFx(() -> {
             device.setTimeSpentToday(formatted);
             dbManager.updateDeviceTimeSpent(device.getId(), formatted);
+            checkDeviceDailyLimit(device);
         });
     }
 
@@ -519,6 +637,108 @@ public class DataService {
         } catch (Exception e) {
             return 0.0;
         }
+    }
+
+    /**
+     * Lấy hạn mức thời gian hôm nay cho thiết bị (tính theo ngày trong tuần/cuối tuần + giờ thưởng nếu có)
+     */
+    public double getTodayDailyLimitHours(Device device) {
+        java.time.DayOfWeek dow = java.time.LocalDate.now().getDayOfWeek();
+        boolean isWeekend = (dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY);
+        double baseLimit = isWeekend ? 4.0 : 2.0;
+
+        if (timeSchedules != null && !timeSchedules.isEmpty()) {
+            for (TimeSchedule ts : timeSchedules) {
+                String dg = ts.getDayGroup().toLowerCase();
+                if (isWeekend && (dg.contains("cuối") || dg.contains("t7") || dg.contains("weekend"))) {
+                    baseLimit = ts.getDailyLimitHours();
+                    break;
+                } else if (!isWeekend && (dg.contains("ngày thường") || dg.contains("t2") || dg.contains("weekday"))) {
+                    baseLimit = ts.getDailyLimitHours();
+                    break;
+                }
+            }
+        }
+
+        double bonusHours = (device != null) ? (device.getBonusMinutes() / 60.0) : 0.0;
+        return baseLimit + bonusHours;
+    }
+
+    /**
+     * Kiểm tra và tự động ngắt mạng nếu thiết bị đã dùng quá hạn mức trong ngày
+     */
+    public void checkDeviceDailyLimit(Device device) {
+        if (device == null || device.getIpAddress() == null || device.getIpAddress().trim().isEmpty()) return;
+        double limitHours = getTodayDailyLimitHours(device);
+        double spentHours = parseSpentHours(device.getTimeSpentToday());
+
+        if (limitHours > 0 && spentHours >= limitHours) {
+            if (!device.isBlocked()) {
+                device.setBlocked(true);
+                dbManager.updateDeviceBlock(device.getId(), true);
+                addSystemLog("⛔ Thiết bị " + device.getName() + " (" + device.getIpAddress() + ") đã dùng " 
+                        + device.getTimeSpentToday() + " / " + String.format("%.1fh", limitHours) 
+                        + " (quá hạn mức hôm nay). Đã tự động NGẮT INTERNET!", "Giới hạn thời gian", "ĐÃ CHẶN");
+                if (vpsClient != null) {
+                    vpsClient.sendDeviceBlock(device.getId(), device.getName(), device.getIpAddress(), device.getMacAddress(), true);
+                }
+            }
+        }
+    }
+
+    public void checkAllDevicesDailyLimits() {
+        for (Device d : devices) {
+            checkDeviceDailyLimit(d);
+        }
+    }
+
+    /**
+     * Thưởng thêm phút sử dụng trong ngày cho thiết bị cụ thể
+     */
+    public void addBonusMinutesToDevice(Device device, int extraMinutes) {
+        if (device == null || extraMinutes <= 0) return;
+        int currentBonus = device.getBonusMinutes();
+        int newBonus = currentBonus + extraMinutes;
+        device.setBonusMinutes(newBonus);
+        dbManager.updateDeviceBonusMinutes(device.getId(), newBonus);
+
+        double newLimit = getTodayDailyLimitHours(device);
+        double spentHours = parseSpentHours(device.getTimeSpentToday());
+
+        addSystemLog("🎁 Đã thưởng thêm +" + extraMinutes + " phút cho " + device.getName() 
+                + " (Hạn mức mới: " + String.format("%.1fh", newLimit) + ")", "Thưởng thời gian", "CHO PHÉP");
+
+        // Nếu thiết bị đang bị chặn do hết hạn mức, nhưng giờ hạn mức mới đã lớn hơn thời gian sử dụng:
+        if (device.isBlocked() && spentHours < newLimit) {
+            device.setBlocked(false);
+            dbManager.updateDeviceBlock(device.getId(), false);
+            addSystemLog("🟢 Khôi phục kết nối Internet cho " + device.getName() 
+                    + " vì đã được thưởng thêm thời gian!", "Giới hạn thời gian", "CHO PHÉP");
+            if (vpsClient != null) {
+                vpsClient.sendDeviceBlock(device.getId(), device.getName(), device.getIpAddress(), device.getMacAddress(), false);
+            }
+        }
+    }
+
+    /**
+     * Thưởng thêm thời gian sử dụng hôm nay cho tất cả các thiết bị kết nối
+     */
+    public void addBonusMinutesToAllDevices(int extraMinutes) {
+        for (Device d : devices) {
+            addBonusMinutesToDevice(d, extraMinutes);
+        }
+    }
+
+    /**
+     * Đặt lại toàn bộ số phút thưởng hôm nay về 0
+     */
+    public void resetAllBonusMinutes() {
+        for (Device d : devices) {
+            d.setBonusMinutes(0);
+            dbManager.updateDeviceBonusMinutes(d.getId(), 0);
+        }
+        checkAllDevicesDailyLimits();
+        addSystemLog("Đã đặt lại toàn bộ giờ thưởng hôm nay về mặc định", "Thưởng thời gian", "CẬP NHẬT");
     }
 
     public String getTotalTimeSpentTodayFormatted() {
@@ -631,13 +851,29 @@ public class DataService {
     }
 
     public void updateDailyLimits(double weekdayHours, double weekendHours) {
+        dbManager.updateTimeScheduleLimits(weekdayHours, weekendHours);
+        for (TimeSchedule ts : timeSchedules) {
+            String dg = ts.getDayGroup().toLowerCase();
+            if (dg.contains("cuối") || dg.contains("t7") || dg.contains("weekend")) {
+                ts.setDailyLimitHours(weekendHours);
+            } else {
+                ts.setDailyLimitHours(weekdayHours);
+            }
+        }
         addSystemLog(String.format("Cập nhật hạn mức: T2-T6: %.1fh, T7-CN: %.1fh", weekdayHours, weekendHours), "Quản trị", "CẬP NHẬT");
         if (vpsClient != null) {
             vpsClient.sendTimeLimits(weekdayHours, weekendHours);
         }
+        checkAllDevicesDailyLimits();
     }
 
     public void updateCurfew(boolean enabled, String startTime, String endTime) {
+        dbManager.updateTimeScheduleCurfew(enabled, startTime, endTime);
+        for (TimeSchedule ts : timeSchedules) {
+            ts.setActive(enabled);
+            ts.setCurfewStart(startTime);
+            ts.setCurfewEnd(endTime);
+        }
         addSystemLog(String.format("Cập nhật giờ giới nghiêm (%s): %s -> %s", enabled ? "BẬT" : "TẮT", startTime, endTime), "Quản trị", "CẬP NHẬT");
         if (vpsClient != null) {
             vpsClient.sendCurfew(enabled, startTime, endTime);
@@ -677,7 +913,19 @@ public class DataService {
                 wl,
                 blockedIps
         );
-        System.out.println("[DataService] Đã gửi bản tin SYNC_RULES lên VPS: "
-                + bl.size() + " cấm, " + wl.size() + " cho phép, " + blockedIps.size() + " thiết bị bị khóa mạng.");
+        List<AppPolicy> allPolicies = dbManager.getAllAppPolicies();
+        for (AppPolicy p : allPolicies) {
+            vpsClient.sendAppPolicyUpdate(p.getTargetIp(), p.getAppId(), p.getTimeLimitMinutes(), p.isBlocked());
+        }
+        if (!timeSchedules.isEmpty()) {
+            TimeSchedule ts0 = timeSchedules.get(0);
+            double weekday = ts0.getDailyLimitHours();
+            double weekend = timeSchedules.size() > 1 ? timeSchedules.get(1).getDailyLimitHours() : weekday;
+            vpsClient.sendTimeLimits(weekday, weekend);
+            vpsClient.sendCurfew(ts0.isActive(), ts0.getCurfewStart(), ts0.getCurfewEnd());
+        }
+        System.out.println("[DataService] Đã gửi bản tin SYNC_RULES, Curfew, Limits & App Policies lên VPS: "
+                + bl.size() + " cấm, " + wl.size() + " cho phép, " + blockedIps.size() + " thiết bị bị khóa mạng, "
+                + allPolicies.size() + " chính sách ứng dụng.");
     }
 }

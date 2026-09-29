@@ -1,6 +1,7 @@
 package org.example.desktopver1.database;
 
 import org.example.desktopver1.model.AccessLog;
+import org.example.desktopver1.model.AppPolicy;
 import org.example.desktopver1.model.CategoryRule;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.service.DataService;
@@ -48,6 +49,7 @@ class DataServiceDatabaseTest {
         assertFalse(dataService.isEmergencyPause());
         assertEquals(4, dataService.getDevices().size());
         assertEquals(6, dataService.getCategoryRules().size());
+        assertEquals(5, dataService.getAppPolicies().size());
         assertTrue(dataService.getBlacklistDomains().size() >= 5);
         assertTrue(dataService.getWhitelistDomains().size() >= 5);
         assertTrue(dataService.getAccessLogs().size() >= 8);
@@ -184,4 +186,108 @@ class DataServiceDatabaseTest {
         assertNotNull(inDb);
         assertEquals(dev.getTimeSpentToday(), inDb.getTimeSpentToday());
     }
+
+    @Test
+    @DisplayName("Kiểm tra DataService tương tác với AppPolicy (Chặn, Hạn mức, Reset)")
+    void testAppPolicyOperations() {
+        AppPolicy yt = dataService.getAppPolicies().stream().filter(a -> a.getAppId().equals("YOUTUBE")).findFirst().orElse(null);
+        assertNotNull(yt);
+
+        // Đổi hạn mức sang 45 phút
+        dataService.setAppTimeLimit(yt, 45);
+        assertEquals(45, yt.getTimeLimitMinutes());
+
+        // Bật chặn YouTube
+        dataService.toggleAppBlock(yt);
+        assertTrue(yt.isBlocked());
+
+        // Reset thời gian
+        dataService.resetAppUsage(yt);
+        assertEquals(0, yt.getUsedSeconds());
+        assertFalse(yt.isTimeExceeded());
+    }
+
+    @Test
+    @DisplayName("Kiểm tra chuyển đổi thiết bị theo dõi và quản lý 5 ứng dụng độc lập cho từng thiết bị")
+    void testMultiDeviceAppPolicySwitching() {
+        assertNotNull(dataService.getSelectedFilterDevice(), "Thiết bị mặc định phải được chọn.");
+        assertEquals("10.0.0.2", dataService.getSelectedFilterDevice().getIpAddress());
+
+        // Lấy YouTube của thiết bị 10.0.0.2
+        AppPolicy ytWg = dataService.getAppPolicies().stream().filter(a -> a.getAppId().equals("YOUTUBE")).findFirst().orElse(null);
+        assertNotNull(ytWg);
+        int originalLimitWg = ytWg.getTimeLimitMinutes();
+
+        // Tìm thiết bị khác: iPad Pro (192.168.1.108)
+        Device ipad = dataService.getDevices().stream()
+                .filter(d -> "192.168.1.108".equals(d.getIpAddress()))
+                .findFirst().orElse(null);
+        assertNotNull(ipad);
+
+        // Chuyển theo dõi sang iPad Pro
+        dataService.setSelectedFilterDevice(ipad);
+        assertEquals(ipad, dataService.getSelectedFilterDevice());
+        assertEquals(5, dataService.getAppPolicies().size());
+
+        // Kiểm tra AppPolicy của iPad
+        AppPolicy ytIpad = dataService.getAppPolicies().stream().filter(a -> a.getAppId().equals("YOUTUBE")).findFirst().orElse(null);
+        assertNotNull(ytIpad);
+        assertEquals("192.168.1.108", ytIpad.getTargetIp());
+
+        // Đổi hạn mức YouTube trên iPad thành 120 phút
+        dataService.setAppTimeLimit(ytIpad, 120);
+        assertEquals(120, ytIpad.getTimeLimitMinutes());
+
+        // Chuyển lại về WireGuard (10.0.0.2)
+        Device wgDev = dataService.getDevices().stream()
+                .filter(d -> "10.0.0.2".equals(d.getIpAddress()))
+                .findFirst().orElse(null);
+        assertNotNull(wgDev);
+        dataService.setSelectedFilterDevice(wgDev);
+
+        AppPolicy ytWgBack = dataService.getAppPolicies().stream().filter(a -> a.getAppId().equals("YOUTUBE")).findFirst().orElse(null);
+        assertNotNull(ytWgBack);
+        assertEquals("10.0.0.2", ytWgBack.getTargetIp());
+        assertEquals(originalLimitWg, ytWgBack.getTimeLimitMinutes(), "Hạn mức trên thiết bị 10.0.0.2 không bị ảnh hưởng bởi iPad.");
+
+        // Chuyển lại iPad kiểm tra tính bền vững từ SQLite
+        dataService.setSelectedFilterDevice(ipad);
+        AppPolicy ytIpadBack = dataService.getAppPolicies().stream().filter(a -> a.getAppId().equals("YOUTUBE")).findFirst().orElse(null);
+        assertNotNull(ytIpadBack);
+        assertEquals(120, ytIpadBack.getTimeLimitMinutes(), "Hạn mức 120 phút của iPad vẫn được lưu và khôi phục từ SQLite.");
+    }
+
+    @Test
+    @DisplayName("Cập nhật hạn mức ngày và giờ giới nghiêm được lưu vào SQLite và cập nhật bộ nhớ")
+    void testDailyLimitsAndCurfewSync() {
+        dataService.updateDailyLimits(3.5, 5.5);
+        assertEquals(3.5, dataService.getTimeSchedules().get(0).getDailyLimitHours());
+
+        dataService.updateCurfew(true, "22:15", "06:45");
+        assertTrue(dataService.getTimeSchedules().get(0).isActive());
+        assertEquals("22:15", dataService.getTimeSchedules().get(0).getCurfewStart());
+        assertEquals("06:45", dataService.getTimeSchedules().get(0).getCurfewEnd());
+    }
+
+    @Test
+    @DisplayName("Thiết bị dùng quá hạn mức ngày bị tự động ngắt mạng và được mở lại khi thưởng thêm giờ")
+    void testDailyLimitExceededAutoBlockAndBonusRestore() {
+        Device dev = dataService.getDevices().get(0);
+        assertNotNull(dev);
+
+        // Đặt hạn mức ngày thường 2.0h
+        dataService.updateDailyLimits(2.0, 4.0);
+
+        // Giả lập thiết bị dùng 2h 30m (quá 2.0h)
+        dev.setTimeSpentToday("2h 30m");
+        dataService.checkDeviceDailyLimit(dev);
+
+        assertTrue(dev.isBlocked(), "Thiết bị dùng quá hạn mức hôm nay phải bị tự động ngắt kết nối Internet.");
+
+        // Thưởng thêm 60 phút (tổng hạn mức thành 3.0h)
+        dataService.addBonusMinutesToDevice(dev, 60);
+        assertEquals(60, dev.getBonusMinutes());
+        assertFalse(dev.isBlocked(), "Khi được thưởng thêm giờ lớn hơn thời gian đã dùng (2h30m < 3.0h), thiết bị phải được tự động mở lại Internet.");
+    }
 }
+

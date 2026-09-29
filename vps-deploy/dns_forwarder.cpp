@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <shared_mutex>
+#include <set>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
@@ -61,6 +62,33 @@ bool emergency_pause = false; // Chế độ khóa mạng khẩn cấp toàn b�
 bool curfew_enabled = false;
 int curfew_start_hour = 21, curfew_start_min = 30;
 int curfew_end_hour = 6, curfew_end_min = 0;
+
+// ============================================================================
+// ĐỊNH NGHĨA 5 ỨNG DỤNG DI ĐỘNG & BỘ THEO DÕI THỜI LƯỢNG TRUY CẬP (SCREEN TIME)
+// ============================================================================
+struct AppDefinition {
+    std::string id;
+    std::string name;
+    std::vector<std::string> domains;
+};
+
+const std::vector<AppDefinition> MANAGED_APPS = {
+    {"YOUTUBE", "YouTube", {"youtube.com", "googlevideo.com", "ytimg.com", "youtu.be", "youtubei.googleapis.com", "yt.be", "ggpht.com", "youtube-nocookie.com"}},
+    {"FACEBOOK", "Facebook & Messenger", {"facebook.com", "fbcdn.net", "fbsbx.com", "fb.com", "facebook.net", "messenger.com", "m.me", "fbinfra.net"}},
+    {"TIKTOK", "TikTok", {"tiktok.com", "tiktokv.com", "tiktokcdn.com", "byteoversea.com", "byteoversea.net", "ibytedtos.com", "musical.ly", "tiktokcdn-us.com", "byteicdn.com", "bytedance.com", "ibyteimg.com", "byteorge.com", "tiktokv.eu", "tiktokw.us", "ttwstatic.com"}},
+    {"INSTAGRAM", "Instagram", {"instagram.com", "cdninstagram.com", "ig.me", "threads.net"}},
+    {"MLBB", "Mobile Legends: Bang Bang", {"mobilelegends.com", "moonton.com", "youngjoygame.com", "mlbb.com", "intlgame.com"}}
+};
+
+struct ClientAppUsage {
+    int used_seconds = 0;           // Số giây đã dùng hôm nay
+    int time_limit_minutes = 60;    // Hạn mức ngày (-1: không giới hạn, >0: phút)
+    bool parent_blocked = false;    // Phụ huynh bật cấm hẳn
+    std::time_t last_active_ts = 0; // Timestamp của DNS query gần nhất
+};
+
+// client_ip -> app_id -> ClientAppUsage
+std::unordered_map<std::string, std::unordered_map<std::string, ClientAppUsage>> client_app_usage;
 
 std::vector<AccessLog> pending_logs;
 std::mutex pending_logs_mutex;
@@ -184,6 +212,33 @@ void iptables_set_emergency_pause(bool pause) {
     }
 }
 
+void sync_curfew_firewall() {
+    bool active = false;
+    {
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
+        active = is_curfew_active();
+    }
+    static bool s_curfew_applied = false;
+    if (active && !s_curfew_applied) {
+        std::cout << "[CURFEW] 🌙 Kích hoạt ngắt Internet ra bên ngoài qua wg0 (Giờ giới nghiêm)" << std::endl;
+        std::string check_cmd = "iptables -C FORWARD -i wg0 -j DROP 2>/dev/null";
+        if (system(check_cmd.c_str()) != 0) {
+            system("iptables -I FORWARD -i wg0 -j DROP");
+        }
+        system("conntrack -F 2>/dev/null");
+        s_curfew_applied = true;
+    } else if (!active && s_curfew_applied) {
+        std::cout << "[CURFEW] ☀️ Mở lại kết nối Internet cho wg0 (Hết giờ giới nghiêm)" << std::endl;
+        system("while iptables -D FORWARD -i wg0 -j DROP 2>/dev/null; do :; done");
+        // Khôi phục lại luật DROP của các thiết bị bị khóa cụ thể
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
+        for (const auto& ip : blocked_client_ips) {
+            iptables_block_device(ip);
+        }
+        s_curfew_applied = false;
+    }
+}
+
 void add_access_log(const std::string& domain,
                     const std::string& status,
                     const sockaddr_in& client) {
@@ -224,6 +279,73 @@ bool is_domain_in_set(const std::string& queried_domain, const std::unordered_se
         }
     }
     return false;
+}
+
+std::string detect_app_for_domain(const std::string& queried_domain) {
+    if (queried_domain.empty()) return "";
+    std::string lower = queried_domain;
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // 1. Nhận diện TikTok theo từ khóa và CDN đặc trưng
+    if (lower.find("tiktok") != std::string::npos ||
+        lower.find("byteoversea") != std::string::npos ||
+        lower.find("ibytedtos") != std::string::npos ||
+        lower.find("byteicdn") != std::string::npos ||
+        lower.find("bytedance") != std::string::npos ||
+        lower.find("ibyteimg") != std::string::npos ||
+        lower.find("musical.ly") != std::string::npos) {
+        return "TIKTOK";
+    }
+
+    // 2. Nhận diện YouTube
+    if (lower.find("youtube") != std::string::npos ||
+        lower.find("googlevideo.com") != std::string::npos ||
+        lower.find("ytimg.com") != std::string::npos ||
+        lower.find("youtu.be") != std::string::npos ||
+        lower.find("ggpht.com") != std::string::npos) {
+        return "YOUTUBE";
+    }
+
+    // 3. Nhận diện Facebook & Messenger
+    if (lower.find("facebook.com") != std::string::npos ||
+        lower.find("fbcdn.net") != std::string::npos ||
+        lower.find("fbsbx.com") != std::string::npos ||
+        lower.find("messenger.com") != std::string::npos ||
+        lower == "fb.com" || (lower.size() > 7 && lower.substr(lower.size() - 7) == ".fb.com") ||
+        lower == "m.me" || (lower.size() > 5 && lower.substr(lower.size() - 5) == ".m.me")) {
+        return "FACEBOOK";
+    }
+
+    // 4. Nhận diện Instagram
+    if (lower.find("instagram.com") != std::string::npos ||
+        lower.find("cdninstagram.com") != std::string::npos ||
+        lower == "ig.me" || (lower.size() > 6 && lower.substr(lower.size() - 6) == ".ig.me") ||
+        lower.find("threads.net") != std::string::npos) {
+        return "INSTAGRAM";
+    }
+
+    // 5. Nhận diện Mobile Legends: Bang Bang
+    if (lower.find("mobilelegends") != std::string::npos ||
+        lower.find("moonton") != std::string::npos ||
+        lower.find("youngjoygame") != std::string::npos ||
+        lower.find("mlbb.com") != std::string::npos) {
+        return "MLBB";
+    }
+
+    // 6. Đối chiếu chính xác theo danh sách domain chuẩn
+    for (const auto& app : MANAGED_APPS) {
+        for (const auto& target_domain : app.domains) {
+            if (lower == target_domain) {
+                return app.id;
+            }
+            if (lower.size() > target_domain.size() &&
+                lower.compare(lower.size() - target_domain.size(), target_domain.size(), target_domain) == 0 &&
+                lower[lower.size() - target_domain.size() - 1] == '.') {
+                return app.id;
+            }
+        }
+    }
+    return "";
 }
 
 // ============================================================================
@@ -460,7 +582,21 @@ json handle_command(const json& command) {
         }
 
         std::cout << "[CURFEW] Cập nhật giờ giới nghiêm: " << (enabled ? "BẬT" : "TẮT") << std::endl;
+        sync_curfew_firewall();
         return {{"success", true}, {"action", action}, {"enabled", enabled}};
+    }
+
+    // 7b. Cập nhật hạn mức thời gian ngày (TIME_LIMIT_UPDATE)
+    if (action == "TIME_LIMIT_UPDATE") {
+        double weekday = command.value("weekdayHours", 2.0);
+        double weekend = command.value("weekendHours", 4.0);
+        std::cout << "[TIME_LIMIT] Nhận hạn mức sử dụng ngày: T2-T6: " << weekday << "h, T7-CN: " << weekend << "h" << std::endl;
+        return {
+            {"success", true},
+            {"action", action},
+            {"weekdayHours", weekday},
+            {"weekendHours", weekend}
+        };
     }
 
     // 8. Ping / Health check
@@ -641,6 +777,101 @@ json handle_command(const json& command) {
         };
     }
 
+    // 15. Cập nhật chính sách và hạn mức thời gian 5 ứng dụng (SET_APP_POLICY)
+    if (action == "SET_APP_POLICY") {
+        std::string ip = command.value("client_ip", "10.0.0.2");
+        std::string app_id = command.value("app_id", "");
+        int limit_min = command.value("time_limit_minutes", 60);
+        bool blocked = command.value("blocked", false);
+
+        if (!app_id.empty()) {
+            std::unique_lock<std::shared_mutex> lock(state_mutex);
+            auto& usage = client_app_usage[ip][app_id];
+            usage.time_limit_minutes = limit_min;
+            usage.parent_blocked = blocked;
+            std::cout << "[APP_POLICY] IP " << ip << " - App " << app_id 
+                      << ": Chặn=" << (blocked ? "BẬT" : "TẮT") 
+                      << ", Hạn mức=" << limit_min << " phút" << std::endl;
+        }
+
+        return {
+            {"success", true},
+            {"action", "SET_APP_POLICY"},
+            {"client_ip", ip},
+            {"app_id", app_id},
+            {"time_limit_minutes", limit_min},
+            {"blocked", blocked}
+        };
+    }
+
+    // 16. Đặt lại thời gian sử dụng hôm nay (RESET_APP_USAGE)
+    if (action == "RESET_APP_USAGE") {
+        std::string ip = command.value("client_ip", "10.0.0.2");
+        std::string app_id = command.value("app_id", "");
+
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
+        if (app_id.empty()) {
+            for (auto& pair : client_app_usage[ip]) {
+                pair.second.used_seconds = 0;
+                pair.second.last_active_ts = 0;
+            }
+            std::cout << "[APP_POLICY] Đã đặt lại thời gian tất cả App cho IP " << ip << std::endl;
+        } else {
+            client_app_usage[ip][app_id].used_seconds = 0;
+            client_app_usage[ip][app_id].last_active_ts = 0;
+            std::cout << "[APP_POLICY] Đã đặt lại thời gian App " << app_id << " cho IP " << ip << std::endl;
+        }
+
+        return {
+            {"success", true},
+            {"action", "RESET_APP_USAGE"},
+            {"client_ip", ip},
+            {"app_id", app_id}
+        };
+    }
+
+    // 17. Lấy danh sách thống kê sử dụng 5 app (GET_APP_USAGE)
+    if (action == "GET_APP_USAGE") {
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
+        json apps_arr = json::array();
+        std::set<std::string> ips = {"10.0.0.2"};
+        for (const auto& [ip, _] : client_app_usage) ips.insert(ip);
+
+        for (const auto& ip : ips) {
+            json dev_entry;
+            dev_entry["client_ip"] = ip;
+            dev_entry["apps"] = json::array();
+            auto it_ip = client_app_usage.find(ip);
+            for (const auto& app_def : MANAGED_APPS) {
+                int used = 0, limit = 60;
+                bool blk = false, exc = false;
+                if (it_ip != client_app_usage.end()) {
+                    auto it_app = it_ip->second.find(app_def.id);
+                    if (it_app != it_ip->second.end()) {
+                        used = it_app->second.used_seconds;
+                        limit = it_app->second.time_limit_minutes;
+                        blk = it_app->second.parent_blocked;
+                        exc = (limit > 0 && used >= limit * 60);
+                    }
+                }
+                dev_entry["apps"].push_back({
+                    {"app_id", app_def.id},
+                    {"app_name", app_def.name},
+                    {"used_seconds", used},
+                    {"time_limit_minutes", limit},
+                    {"blocked", blk},
+                    {"time_exceeded", exc}
+                });
+            }
+            apps_arr.push_back(dev_entry);
+        }
+        return {
+            {"success", true},
+            {"action", "GET_APP_USAGE"},
+            {"devices", apps_arr}
+        };
+    }
+
     std::cerr << "[CONTROL] UNKNOWN_ACTION: " << action << std::endl;
     return {{"success", false}, {"action", action}, {"error", "UNKNOWN_ACTION"}};
 }
@@ -682,7 +913,49 @@ json make_sync_batch(const std::vector<AccessLog>& logs) {
     };
 }
 
+bool sync_app_usage_to_parent(int parent_fd) {
+    std::shared_lock<std::shared_mutex> lock(state_mutex);
+    json apps_arr = json::array();
+    std::set<std::string> ips = {"10.0.0.2"};
+    for (const auto& [ip, _] : client_app_usage) ips.insert(ip);
+
+    for (const auto& ip : ips) {
+        json dev_entry;
+        dev_entry["client_ip"] = ip;
+        dev_entry["apps"] = json::array();
+        auto it_ip = client_app_usage.find(ip);
+        for (const auto& app_def : MANAGED_APPS) {
+            int used = 0, limit = 60;
+            bool blk = false, exc = false;
+            if (it_ip != client_app_usage.end()) {
+                auto it_app = it_ip->second.find(app_def.id);
+                if (it_app != it_ip->second.end()) {
+                    used = it_app->second.used_seconds;
+                    limit = it_app->second.time_limit_minutes;
+                    blk = it_app->second.parent_blocked;
+                    exc = (limit > 0 && used >= limit * 60);
+                }
+            }
+            dev_entry["apps"].push_back({
+                {"app_id", app_def.id},
+                {"app_name", app_def.name},
+                {"used_seconds", used},
+                {"time_limit_minutes", limit},
+                {"blocked", blk},
+                {"time_exceeded", exc}
+            });
+        }
+        apps_arr.push_back(dev_entry);
+    }
+    json msg = {{"action", "SYNC_APP_USAGE"}, {"devices", apps_arr}};
+    return send_json_line(parent_fd, msg);
+}
+
 bool sync_pending_logs(int parent_fd) {
+    // 1. Đồng bộ thống kê sử dụng 5 app về JavaFX
+    sync_app_usage_to_parent(parent_fd);
+
+    // 2. Đồng bộ các log DNS vi phạm/cho phép
     std::vector<AccessLog> snapshot;
     {
         std::lock_guard<std::mutex> lock(pending_logs_mutex);
@@ -921,7 +1194,7 @@ void handle_dns_packet(int dns_fd, const sockaddr_in& upstream_addr) {
     std::string block_reason = "";
 
     {
-        std::shared_lock<std::shared_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
 
         if (emergency_pause) {
             should_block = true;
@@ -943,6 +1216,39 @@ void handle_dns_packet(int dns_fd, const sockaddr_in& upstream_addr) {
                 // Tên miền nằm trong danh sách cấm (Blacklist)
                 should_block = true;
                 block_reason = "BLACKLIST_REFUSED";
+            } else {
+                // Kiểm tra 5 ứng dụng di động: YouTube, Facebook, TikTok, Instagram, Mobile Legends
+                std::string detected_app = detect_app_for_domain(queried_domain);
+                if (!detected_app.empty()) {
+                    auto& usage = client_app_usage[client_ip][detected_app];
+                    if (usage.parent_blocked) {
+                        should_block = true;
+                        block_reason = "APP_PARENT_BLOCKED_" + detected_app;
+                    } else if (usage.time_limit_minutes > 0 && usage.used_seconds >= (usage.time_limit_minutes * 60)) {
+                        should_block = true;
+                        block_reason = "APP_TIME_EXCEEDED_" + detected_app;
+                    } else {
+                        // Cho phép và tính toán thời gian sử dụng theo phiên thực tế
+                        std::time_t now = std::time(nullptr);
+                        if (usage.last_active_ts > 0) {
+                            long diff = static_cast<long>(now - usage.last_active_ts);
+                            if (diff > 0 && diff <= 120) {
+                                usage.used_seconds += static_cast<int>(diff > 60 ? 60 : diff);
+                            } else if (diff > 120) {
+                                usage.used_seconds += 5; // Mở phiên mới
+                            }
+                        } else {
+                            usage.used_seconds += 5;
+                        }
+                        usage.last_active_ts = now;
+
+                        if (usage.time_limit_minutes > 0 && usage.used_seconds >= (usage.time_limit_minutes * 60)) {
+                            std::cout << "[APP_LIMIT] IP " << client_ip << " đã hết hạn mức thời gian App " 
+                                      << detected_app << " (" << usage.used_seconds << "s / " 
+                                      << (usage.time_limit_minutes * 60) << "s)" << std::endl;
+                        }
+                    }
+                }
             }
         }
     }
@@ -1034,6 +1340,15 @@ int main() {
     // Khởi chạy luồng TCP Control Server (Cổng 9000)
     std::thread control_thread(tcp_control_worker);
     control_thread.detach();
+
+    // Khởi chạy luồng giám sát giờ giới nghiêm & ngắt Internet định kỳ
+    std::thread curfew_watchdog([]() {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            sync_curfew_firewall();
+        }
+    });
+    curfew_watchdog.detach();
 
     std::cout << "===========================================================" << std::endl;
     std::cout << "🛡️  FAMILYGUARD VPS CORE - DNS FORWARDER & TCP IPC SERVER" << std::endl;

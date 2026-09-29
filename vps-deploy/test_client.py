@@ -80,6 +80,16 @@ def main():
         # 8. Test Giờ giới nghiêm
         send_and_recv(sock, {"action": "CURFEW_UPDATE", "enabled": True, "startTime": "21:30", "endTime": "06:00"})
 
+        # 9. Test Cập nhật chính sách 5 App di động (YouTube, Facebook, TikTok, Instagram, MLBB)
+        send_and_recv(sock, {"action": "SET_APP_POLICY", "client_ip": "10.0.0.2", "app_id": "TIKTOK", "time_limit_minutes": 30, "blocked": True})
+        send_and_recv(sock, {"action": "SET_APP_POLICY", "client_ip": "10.0.0.2", "app_id": "YOUTUBE", "time_limit_minutes": 60, "blocked": False})
+
+        # 10. Test Lấy thống kê sử dụng và hạn mức 5 App
+        send_and_recv(sock, {"action": "GET_APP_USAGE"})
+
+        # 11. Test Đặt lại thời gian sử dụng hôm nay của App
+        send_and_recv(sock, {"action": "RESET_APP_USAGE", "client_ip": "10.0.0.2", "app_id": "TIKTOK"})
+
         print("\n[✓] HOÀN TẤT KIỂM THỬ: VPS ĐÃ NHẬN VÀ PHẢN HỒI THÀNH CÔNG TẤT CẢ CÁC LỆNH!")
         sock.close()
 

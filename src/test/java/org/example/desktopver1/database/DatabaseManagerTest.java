@@ -1,6 +1,7 @@
 package org.example.desktopver1.database;
 
 import org.example.desktopver1.model.AccessLog;
+import org.example.desktopver1.model.AppPolicy;
 import org.example.desktopver1.model.CategoryRule;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.model.TimeSchedule;
@@ -55,7 +56,8 @@ class DatabaseManagerTest {
                     "blacklist_domains",
                     "whitelist_domains",
                     "access_logs",
-                    "time_schedules"
+                    "time_schedules",
+                    "app_policies"
             };
 
             for (String table : expectedTables) {
@@ -104,6 +106,43 @@ class DatabaseManagerTest {
         // 6. Kiểm tra TimeSchedules giả lập
         List<TimeSchedule> schedules = dbManager.getAllTimeSchedules();
         assertEquals(2, schedules.size(), "Phải có 2 cấu hình lịch dùng máy.");
+
+        // 7. Kiểm tra 5 App Policies giả lập theo thiết bị
+        List<AppPolicy> appPolicies = dbManager.getAppPoliciesForDevice("10.0.0.2");
+        assertEquals(5, appPolicies.size(), "Phải có đúng 5 ứng dụng quản lý ban đầu cho thiết bị WireGuard.");
+        assertTrue(appPolicies.stream().anyMatch(a -> a.getAppId().equals("YOUTUBE")));
+        assertTrue(appPolicies.stream().anyMatch(a -> a.getAppId().equals("TIKTOK")));
+        assertTrue(appPolicies.stream().anyMatch(a -> a.getAppId().equals("FACEBOOK")));
+        assertTrue(appPolicies.stream().anyMatch(a -> a.getAppId().equals("INSTAGRAM")));
+        assertTrue(appPolicies.stream().anyMatch(a -> a.getAppId().equals("MLBB")));
+
+        List<AppPolicy> allPolicies = dbManager.getAllAppPolicies();
+        assertEquals(20, allPolicies.size(), "Tổng cộng 20 chính sách cho 4 thiết bị được nạp mẫu.");
+    }
+
+    @Test
+    @DisplayName("Kiểm tra cập nhật hạn mức và trạng thái 5 ứng dụng (AppPolicy CRUD)")
+    void testAppPolicyCrud() {
+        // Cập nhật chặn TikTok
+        dbManager.updateAppPolicyBlock("TIKTOK", "10.0.0.2", true);
+        List<AppPolicy> list = dbManager.getAppPoliciesForDevice("10.0.0.2");
+        AppPolicy tiktok = list.stream().filter(a -> a.getAppId().equals("TIKTOK")).findFirst().orElse(null);
+        assertNotNull(tiktok);
+        assertTrue(tiktok.isBlocked());
+
+        // Cập nhật hạn mức YouTube thành 90 phút
+        dbManager.updateAppPolicyLimit("YOUTUBE", "10.0.0.2", 90);
+        list = dbManager.getAppPoliciesForDevice("10.0.0.2");
+        AppPolicy yt = list.stream().filter(a -> a.getAppId().equals("YOUTUBE")).findFirst().orElse(null);
+        assertNotNull(yt);
+        assertEquals(90, yt.getTimeLimitMinutes());
+
+        // Reset thời gian dùng
+        dbManager.resetAppPolicyUsage("TIKTOK", "10.0.0.2");
+        list = dbManager.getAppPoliciesForDevice("10.0.0.2");
+        tiktok = list.stream().filter(a -> a.getAppId().equals("TIKTOK")).findFirst().orElse(null);
+        assertNotNull(tiktok);
+        assertEquals(0, tiktok.getUsedSeconds());
     }
 
     @Test

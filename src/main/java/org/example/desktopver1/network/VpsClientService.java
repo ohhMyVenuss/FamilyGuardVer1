@@ -8,6 +8,9 @@ import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import org.example.desktopver1.model.AccessLog;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.model.VpsSyncLogPayload;
@@ -308,6 +311,11 @@ public class VpsClientService {
             parseAndSyncLogs(rawJson);
         }
 
+        // Tự động phân tích và đồng bộ thời gian sử dụng 5 ứng dụng di động từ VPS
+        if (rawJson != null && rawJson.contains("\"SYNC_APP_USAGE\"")) {
+            parseAndSyncAppUsage(rawJson);
+        }
+
         // Tự động phân tích phản hồi cấp cấu hình WireGuard từ VPS
         if (rawJson != null && rawJson.contains("\"CREATE_WIREGUARD_PEER\"")) {
             try {
@@ -332,6 +340,41 @@ public class VpsClientService {
             } catch (Exception e) {
                 System.err.println("[VPS-Client] Lỗi listener khi nhận tin: " + e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Giải mã gói SYNC_APP_USAGE từ VPS và cập nhật trạng thái thời gian thực cho 5 ứng dụng
+     */
+    private void parseAndSyncAppUsage(String rawJson) {
+        try {
+            JsonObject root = gson.fromJson(rawJson, JsonObject.class);
+            if (root != null && root.has("devices") && root.get("devices").isJsonArray()) {
+                JsonArray devices = root.getAsJsonArray("devices");
+                for (JsonElement devElem : devices) {
+                    if (!devElem.isJsonObject()) continue;
+                    JsonObject devObj = devElem.getAsJsonObject();
+                    String clientIp = devObj.has("client_ip") ? devObj.get("client_ip").getAsString() : "10.0.0.2";
+                    if (devObj.has("apps") && devObj.get("apps").isJsonArray()) {
+                        JsonArray apps = devObj.getAsJsonArray("apps");
+                        for (JsonElement appElem : apps) {
+                            if (!appElem.isJsonObject()) continue;
+                            JsonObject appObj = appElem.getAsJsonObject();
+                            String appId = appObj.has("app_id") ? appObj.get("app_id").getAsString() : "";
+                            int usedSec = appObj.has("used_seconds") ? appObj.get("used_seconds").getAsInt() : 0;
+                            int limitMin = appObj.has("time_limit_minutes") ? appObj.get("time_limit_minutes").getAsInt() : 60;
+                            boolean blk = appObj.has("blocked") && appObj.get("blocked").getAsBoolean();
+
+                            runOnFxThread(() -> {
+                                DataService.getInstance().updateAppPolicyFromVps(clientIp, appId, usedSec, limitMin, blk);
+                            });
+                        }
+                    }
+                }
+                System.out.println("[VPS-Client] Đã đồng bộ thành công dữ liệu lưu lượng thời gian của 5 ứng dụng từ VPS.");
+            }
+        } catch (Exception e) {
+            System.err.println("[VPS-Client] Lỗi giải mã gói SYNC_APP_USAGE: " + e.getMessage());
         }
     }
 
@@ -379,7 +422,8 @@ public class VpsClientService {
                 System.out.println("[VPS-Client] Đã dùng Gson parse thành công " + newLogs.size() + " đối tượng AccessLog và lưu vào SQLite.");
             }
         } catch (Exception e) {
-            System.err.println("[VPS-Client] Lỗi khi dùng Gson phân tích gói SYNC_LOGS: " + e.getMessage());
+            System.err.println("[VPS-Client] Lỗi khi xử lý gói SYNC_LOGS: " + (e.getMessage() != null ? e.getMessage() : e.toString()));
+            e.printStackTrace();
         }
     }
 
@@ -650,6 +694,41 @@ public class VpsClientService {
                 .put("action", "CREATE_WIREGUARD_PEER")
                 .put("deviceName", deviceName != null ? deviceName.trim() : "ThietBiCon")
                 .put("deviceType", deviceType != null ? deviceType.trim() : "Điện thoại")
+                .put("sender", "PARENT")
+                .put("timestamp", LocalDateTime.now().format(timeFormatter))
+                .build();
+        sendJson(json);
+    }
+
+    /**
+     * Gửi cập nhật chính sách chặn/hạn mức thời gian sử dụng của 1 ứng dụng di động lên VPS.
+     *
+     * @param clientIp Địa chỉ IP WireGuard của máy con (VD: 10.0.0.2)
+     * @param appId Mã ứng dụng (YOUTUBE, FACEBOOK, TIKTOK, INSTAGRAM, MLBB)
+     * @param timeLimitMinutes Hạn mức sử dụng hàng ngày theo phút (-1: không giới hạn)
+     * @param blocked Có bị phụ huynh chặn hoàn toàn hay không
+     */
+    public void sendAppPolicyUpdate(String clientIp, String appId, int timeLimitMinutes, boolean blocked) {
+        String json = JsonUtil.builder()
+                .put("action", "SET_APP_POLICY")
+                .put("client_ip", clientIp != null ? clientIp : "10.0.0.2")
+                .put("app_id", appId)
+                .put("time_limit_minutes", timeLimitMinutes)
+                .put("blocked", blocked)
+                .put("sender", "PARENT")
+                .put("timestamp", LocalDateTime.now().format(timeFormatter))
+                .build();
+        sendJson(json);
+    }
+
+    /**
+     * Gửi yêu cầu đặt lại bộ đếm thời gian sử dụng hôm nay cho ứng dụng (hoặc toàn bộ) trên máy con.
+     */
+    public void sendResetAppUsage(String clientIp, String appId) {
+        String json = JsonUtil.builder()
+                .put("action", "RESET_APP_USAGE")
+                .put("client_ip", clientIp != null ? clientIp : "10.0.0.2")
+                .put("app_id", appId != null ? appId : "")
                 .put("sender", "PARENT")
                 .put("timestamp", LocalDateTime.now().format(timeFormatter))
                 .build();
