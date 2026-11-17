@@ -10,9 +10,12 @@ import javafx.scene.layout.*;
 import org.example.desktopver1.model.AccessLog;
 import org.example.desktopver1.service.DataService;
 import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignC;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
 import org.kordamp.ikonli.materialdesign2.MaterialDesignR;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.function.Consumer;
 
 /**
@@ -30,6 +33,8 @@ public class AccessLogsView extends VBox {
     private FilteredList<AccessLog> filteredData;
     private TextField searchField;
     private ComboBox<String> filterCombo;
+    private ComboBox<String> timeRangeCombo;
+    private DatePicker datePicker;
     private Label footerStatsLabel;
 
     public AccessLogsView(DataService dataService, Consumer<String> legacyToast, ToastManager.ToastHandler toastHandler) {
@@ -76,11 +81,41 @@ public class AccessLogsView extends VBox {
 
         searchField = new TextField();
         searchField.setPromptText("Tìm theo tên miền, thiết bị, lý do...");
-        searchField.setPrefWidth(280);
+        searchField.setPrefWidth(240);
 
         filterCombo = new ComboBox<>();
         filterCombo.getItems().addAll("Tất cả trạng thái", "Chỉ xem: ĐÃ CHẶN", "Chỉ xem: CHO PHÉP");
         filterCombo.setValue("Tất cả trạng thái");
+
+        // Mốc thời gian theo dõi
+        FontIcon clockIcon = new FontIcon(MaterialDesignC.CLOCK_OUTLINE);
+        clockIcon.setIconSize(16);
+        timeRangeCombo = new ComboBox<>();
+        timeRangeCombo.getItems().addAll(
+                "Tất cả thời gian",
+                "15 phút gần đây",
+                "1 giờ gần đây",
+                "Hôm nay",
+                "7 ngày gần đây",
+                "Chọn ngày cụ thể..."
+        );
+        timeRangeCombo.setValue("Tất cả thời gian");
+
+        datePicker = new DatePicker(LocalDate.now());
+        datePicker.setPrefWidth(135);
+        datePicker.setVisible(false);
+        datePicker.setManaged(false);
+
+        timeRangeCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            boolean customDate = "Chọn ngày cụ thể...".equals(newVal);
+            datePicker.setVisible(customDate);
+            datePicker.setManaged(customDate);
+            applyFilter();
+        });
+        datePicker.valueProperty().addListener((obs, oldVal, newVal) -> applyFilter());
+
+        HBox timeFilterBox = new HBox(6, clockIcon, timeRangeCombo, datePicker);
+        timeFilterBox.setAlignment(Pos.CENTER_LEFT);
 
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
@@ -109,7 +144,7 @@ public class AccessLogsView extends VBox {
             });
         });
 
-        bar.getChildren().addAll(searchField, filterCombo, sp, btnRefresh, btnExport, btnClear);
+        bar.getChildren().addAll(searchField, filterCombo, timeFilterBox, sp, btnRefresh, btnExport, btnClear);
         return bar;
     }
 
@@ -202,6 +237,9 @@ public class AccessLogsView extends VBox {
     private void applyFilter() {
         String searchText = searchField.getText() == null ? "" : searchField.getText().toLowerCase().trim();
         String comboVal = filterCombo.getValue();
+        String timeVal = timeRangeCombo != null ? timeRangeCombo.getValue() : "Tất cả thời gian";
+        LocalDate selectedDate = datePicker != null ? datePicker.getValue() : null;
+        LocalDateTime now = LocalDateTime.now();
 
         filteredData.setPredicate(log -> {
             // Lọc theo trạng thái combo
@@ -210,6 +248,33 @@ public class AccessLogsView extends VBox {
             }
             if ("Chỉ xem: CHO PHÉP".equals(comboVal) && !"CHO PHÉP".equalsIgnoreCase(log.getAction())) {
                 return false;
+            }
+
+            // Lọc theo mốc thời gian
+            if (timeVal != null && !"Tất cả thời gian".equals(timeVal)) {
+                LocalDateTime logTime = dataService.parseLogTimestamp(log.getTimestamp());
+                if (logTime == null) {
+                    return false;
+                }
+                switch (timeVal) {
+                    case "15 phút gần đây":
+                        if (logTime.isBefore(now.minusMinutes(15))) return false;
+                        break;
+                    case "1 giờ gần đây":
+                        if (logTime.isBefore(now.minusHours(1))) return false;
+                        break;
+                    case "Hôm nay":
+                        if (!logTime.toLocalDate().equals(now.toLocalDate())) return false;
+                        break;
+                    case "7 ngày gần đây":
+                        if (logTime.isBefore(now.minusDays(7))) return false;
+                        break;
+                    case "Chọn ngày cụ thể...":
+                        if (selectedDate != null && !logTime.toLocalDate().equals(selectedDate)) return false;
+                        break;
+                    default:
+                        break;
+                }
             }
 
             // Lọc theo từ khóa tìm kiếm
@@ -248,6 +313,11 @@ public class AccessLogsView extends VBox {
                 blocked++;
             }
         }
-        footerStatsLabel.setText(String.format("Đang hiển thị %d / %d bản ghi | Đã ngăn chặn: %d sự kiện | Kiểm duyệt thời gian thực", showing, total, blocked));
+        String milestone = timeRangeCombo != null ? timeRangeCombo.getValue() : "Tất cả thời gian";
+        if ("Chọn ngày cụ thể...".equals(milestone) && datePicker != null && datePicker.getValue() != null) {
+            milestone = "Ngày " + datePicker.getValue();
+        }
+        footerStatsLabel.setText(String.format("Mốc: %s | Hiển thị %d / %d bản ghi | Đã chặn: %d sự kiện | Đồng bộ thời gian thực",
+                milestone, showing, total, blocked));
     }
 }
