@@ -56,6 +56,7 @@ public class TimeManagementView extends ScrollPane {
 
         setFitToWidth(true);
         getStyleClass().add("view-scroll");
+        SmoothScrollHelper.applySmoothScrolling(this);
 
         VBox contentBox = new VBox(20);
         contentBox.getStyleClass().add("view-container");
@@ -133,10 +134,7 @@ public class TimeManagementView extends ScrollPane {
         sliderWeekday.setShowTickLabels(true);
         sliderWeekday.setMajorTickUnit(1.0);
         sliderWeekday.setBlockIncrement(0.5);
-        sliderWeekday.valueProperty().addListener((obs, oldVal, newVal) -> {
-            double snapped = Math.round(newVal.doubleValue() * 2.0) / 2.0;
-            lblWeekdayVal.setText(String.format("%.1f giờ / ngày", snapped));
-        });
+        SmoothScrollHelper.enhanceSlider(sliderWeekday, lblWeekdayVal, "giờ / ngày");
         weekdayBox.getChildren().addAll(weekdayHeader, sliderWeekday);
 
         // Thanh trượt T7, CN
@@ -156,10 +154,7 @@ public class TimeManagementView extends ScrollPane {
         sliderWeekend.setShowTickLabels(true);
         sliderWeekend.setMajorTickUnit(1.0);
         sliderWeekend.setBlockIncrement(0.5);
-        sliderWeekend.valueProperty().addListener((obs, oldVal, newVal) -> {
-            double snapped = Math.round(newVal.doubleValue() * 2.0) / 2.0;
-            lblWeekendVal.setText(String.format("%.1f giờ / ngày", snapped));
-        });
+        SmoothScrollHelper.enhanceSlider(sliderWeekend, lblWeekendVal, "giờ / ngày");
         weekendBox.getChildren().addAll(weekendHeader, sliderWeekend);
 
         Label note = new Label("Khi thiết bị vượt quá hạn mức ngày, hệ thống tự động ngắt Internet và đồng bộ lên VPS.");

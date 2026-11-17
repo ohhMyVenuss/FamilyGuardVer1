@@ -56,6 +56,7 @@ public class ContentFilterView extends ScrollPane {
 
         setFitToWidth(true);
         getStyleClass().add("view-scroll");
+        SmoothScrollHelper.applySmoothScrolling(this);
 
         VBox contentBox = new VBox(20);
         contentBox.getStyleClass().add("view-container");
