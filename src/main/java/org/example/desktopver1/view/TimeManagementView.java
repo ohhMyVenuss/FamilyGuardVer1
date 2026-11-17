@@ -1,13 +1,35 @@
 package org.example.desktopver1.view;
 
+import atlantafx.base.controls.ToggleSwitch;
+import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Node;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.ProgressBar;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Separator;
+import javafx.scene.control.Slider;
+import javafx.scene.control.TextInputDialog;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
+import org.example.desktopver1.model.AccessLog;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.model.TimeSchedule;
 import org.example.desktopver1.service.DataService;
+import org.kordamp.ikonli.Ikon;
+import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignC;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignG;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignL;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignR;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignT;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignW;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -16,40 +38,41 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
- * Giao diện Quản lý thời gian (Time Management):
- * - Đặt hạn mức thời lượng online mỗi ngày (Ngày thường / Cuối tuần)
- * - Khung giờ giới nghiêm linh hoạt (Bedtime Lock) ngắt kết nối internet ra bên ngoài
- * - Tự động ngắt internet thiết bị khi truy cập quá hạn mức 1 ngày
- * - Thưởng/cộng thêm hạn mức thời gian cho từng thiết bị hoặc toàn bộ máy
+ * Màn hình Quản lý thời gian (Time Management):
+ * - Hạn mức hàng ngày: Thanh trượt điều chỉnh số giờ tối đa cho ngày trong tuần (T2 - T6) và cuối tuần (T7, CN)
+ * - Giờ giới nghiêm ban đêm (Bedtime Curfew): Tự động ngắt mạng từ 21:30 đến 06:00 sáng
+ * - Thanh đo tiến độ (ProgressBar): Theo dõi trực tiếp thời gian từng thiết bị đã sử dụng trong ngày
+ * - Tính năng thưởng giờ: Cộng thêm 30 phút (hoặc tùy chỉnh) khi con hoàn thành tốt bài tập
  */
 public class TimeManagementView extends ScrollPane {
 
     private final DataService dataService;
-    private final Consumer<String> toastNotifier;
+    private final ToastManager.ToastHandler toastHandler;
+    private VBox trackerList;
 
-    public TimeManagementView(DataService dataService, Consumer<String> toastNotifier) {
+    public TimeManagementView(DataService dataService, Consumer<String> legacyToast, ToastManager.ToastHandler toastHandler) {
         this.dataService = dataService;
-        this.toastNotifier = toastNotifier;
+        this.toastHandler = toastHandler;
 
         setFitToWidth(true);
-        setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+        getStyleClass().add("view-scroll");
 
-        VBox contentBox = new VBox(24);
+        VBox contentBox = new VBox(20);
         contentBox.getStyleClass().add("view-container");
 
-        // 1. Tiêu đề module
+        // 1. Tiêu đề
         contentBox.getChildren().add(createHeader());
 
-        // 2. Hàng 2 cột: Cài đặt hạn mức & Khung giờ giới nghiêm linh hoạt
+        // 2. Hàng 2 cột: Hạn mức hàng ngày & Giờ giới nghiêm ban đêm
         HBox settingsRow = new HBox(20);
-        VBox col1 = createDailyLimitCard();
-        VBox col2 = createCurfewCard();
-        HBox.setHgrow(col1, Priority.ALWAYS);
-        HBox.setHgrow(col2, Priority.ALWAYS);
-        settingsRow.getChildren().addAll(col1, col2);
+        VBox dailyLimitCard = createDailyLimitCard();
+        VBox curfewCard = createCurfewCard();
+        HBox.setHgrow(dailyLimitCard, Priority.ALWAYS);
+        HBox.setHgrow(curfewCard, Priority.ALWAYS);
+        settingsRow.getChildren().addAll(dailyLimitCard, curfewCard);
         contentBox.getChildren().add(settingsRow);
 
-        // 3. Theo dõi tiến độ thực tế & Cộng thêm giờ từng máy
+        // 3. Thanh đo tiến độ trực tiếp theo thiết bị & Thưởng giờ
         contentBox.getChildren().add(createDeviceTimeTrackerCard());
 
         setContent(contentBox);
@@ -57,29 +80,34 @@ public class TimeManagementView extends ScrollPane {
 
     private VBox createHeader() {
         VBox box = new VBox(4);
-        Label title = new Label("Quản Lý & Giới Hạn Thời Gian Truy Cập");
-        title.getStyleClass().add("header-welcome");
-        Label sub = new Label("Thiết lập thời gian biểu khoa học, tự động ngắt Internet khi quá hạn hoặc vào giờ giới nghiêm.");
-        sub.getStyleClass().add("header-subtitle");
+        Label title = new Label("Quản lý Thời gian (Time Management)");
+        title.getStyleClass().add("page-title");
+        Label sub = new Label("Thiết lập hạn mức sử dụng hàng ngày, giờ giới nghiêm ban đêm và thưởng thêm thời gian cho con.");
+        sub.getStyleClass().add("page-subtitle");
         box.getChildren().addAll(title, sub);
         return box;
     }
 
     private VBox createDailyLimitCard() {
         VBox card = new VBox(16);
-        card.getStyleClass().add("card");
+        card.getStyleClass().add("fg-card");
 
-        Label cardTitle = new Label("⏱️ Hạn mức sử dụng hàng ngày (Daily Limits)");
+        HBox titleRow = new HBox(8);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
+        FontIcon icon = new FontIcon(MaterialDesignC.CLOCK_OUTLINE);
+        icon.setIconSize(20);
+        Label cardTitle = new Label("Hạn mức hàng ngày (Daily Limits)");
         cardTitle.getStyleClass().add("card-title");
-        Label cardSub = new Label("Hệ thống sẽ tự động ngắt kết nối internet của thiết bị khi hết giờ trong ngày");
+        titleRow.getChildren().addAll(icon, cardTitle);
+
+        Label cardSub = new Label("Điều chỉnh số giờ tối đa được phép truy cập Internet mỗi ngày.");
         cardSub.getStyleClass().add("card-subtitle");
 
-        // Đọc giá trị đã lưu từ database
         double initWeekday = 2.0;
         double initWeekend = 4.0;
-        if (dataService.getTimeSchedules() != null && !dataService.getTimeSchedules().isEmpty()) {
+        if (dataService.getTimeSchedules() != null) {
             for (TimeSchedule ts : dataService.getTimeSchedules()) {
-                String dg = ts.getDayGroup().toLowerCase();
+                String dg = ts.getDayGroup() != null ? ts.getDayGroup().toLowerCase() : "";
                 if (dg.contains("cuối") || dg.contains("t7") || dg.contains("weekend")) {
                     initWeekend = ts.getDailyLimitHours();
                 } else {
@@ -88,110 +116,126 @@ public class TimeManagementView extends ScrollPane {
             }
         }
 
-        // 1. Ngày thường
+        // Thanh trượt T2 - T6
         VBox weekdayBox = new VBox(6);
-        Label lblWeekday = new Label(String.format("Ngày trong tuần (Thứ 2 - Thứ 6): %.1f giờ / ngày", initWeekday));
-        lblWeekday.setStyle("-fx-font-weight: 600; -fx-text-fill: #1E293B;");
+        HBox weekdayHeader = new HBox();
+        weekdayHeader.setAlignment(Pos.CENTER_LEFT);
+        Label lblWeekdayTitle = new Label("Ngày trong tuần (T2 - T6)");
+        lblWeekdayTitle.setStyle("-fx-font-weight: bold;");
+        Region sp1 = new Region();
+        HBox.setHgrow(sp1, Priority.ALWAYS);
+        Label lblWeekdayVal = new Label(String.format("%.1f giờ / ngày", initWeekday));
+        lblWeekdayVal.getStyleClass().addAll("status-badge", "badge-neutral");
+        weekdayHeader.getChildren().addAll(lblWeekdayTitle, sp1, lblWeekdayVal);
+
         Slider sliderWeekday = new Slider(0.5, 8.0, initWeekday);
         sliderWeekday.setShowTickMarks(true);
         sliderWeekday.setShowTickLabels(true);
         sliderWeekday.setMajorTickUnit(1.0);
         sliderWeekday.setBlockIncrement(0.5);
         sliderWeekday.valueProperty().addListener((obs, oldVal, newVal) -> {
-            lblWeekday.setText(String.format("Ngày trong tuần (Thứ 2 - Thứ 6): %.1f giờ / ngày", newVal.doubleValue()));
+            double snapped = Math.round(newVal.doubleValue() * 2.0) / 2.0;
+            lblWeekdayVal.setText(String.format("%.1f giờ / ngày", snapped));
         });
-        weekdayBox.getChildren().addAll(lblWeekday, sliderWeekday);
+        weekdayBox.getChildren().addAll(weekdayHeader, sliderWeekday);
 
-        // 2. Cuối tuần
+        // Thanh trượt T7, CN
         VBox weekendBox = new VBox(6);
-        Label lblWeekend = new Label(String.format("Cuối tuần (Thứ 7 & Chủ Nhật): %.1f giờ / ngày", initWeekend));
-        lblWeekend.setStyle("-fx-font-weight: 600; -fx-text-fill: #1E293B;");
+        HBox weekendHeader = new HBox();
+        weekendHeader.setAlignment(Pos.CENTER_LEFT);
+        Label lblWeekendTitle = new Label("Cuối tuần (T7, CN)");
+        lblWeekendTitle.setStyle("-fx-font-weight: bold;");
+        Region sp2 = new Region();
+        HBox.setHgrow(sp2, Priority.ALWAYS);
+        Label lblWeekendVal = new Label(String.format("%.1f giờ / ngày", initWeekend));
+        lblWeekendVal.getStyleClass().addAll("status-badge", "badge-neutral");
+        weekendHeader.getChildren().addAll(lblWeekendTitle, sp2, lblWeekendVal);
+
         Slider sliderWeekend = new Slider(1.0, 10.0, initWeekend);
         sliderWeekend.setShowTickMarks(true);
         sliderWeekend.setShowTickLabels(true);
         sliderWeekend.setMajorTickUnit(1.0);
         sliderWeekend.setBlockIncrement(0.5);
         sliderWeekend.valueProperty().addListener((obs, oldVal, newVal) -> {
-            lblWeekend.setText(String.format("Cuối tuần (Thứ 7 & Chủ Nhật): %.1f giờ / ngày", newVal.doubleValue()));
+            double snapped = Math.round(newVal.doubleValue() * 2.0) / 2.0;
+            lblWeekendVal.setText(String.format("%.1f giờ / ngày", snapped));
         });
-        weekendBox.getChildren().addAll(lblWeekend, sliderWeekend);
+        weekendBox.getChildren().addAll(weekendHeader, sliderWeekend);
 
-        Label note = new Label("💡 Khi thiết bị vượt quá số giờ trên, Internet sẽ lập tức bị ngắt. Phụ huynh có thể thưởng thêm giờ để mở lại mạng bất cứ lúc nào.");
+        Label note = new Label("Khi thiết bị vượt quá hạn mức ngày, hệ thống tự động ngắt Internet và đồng bộ lên VPS.");
         note.setWrapText(true);
-        note.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B; -fx-background-color: #F8FAFC; -fx-padding: 8; -fx-background-radius: 6;");
+        note.getStyleClass().add("card-subtitle");
 
-        Button btnSaveLimits = new Button("Lưu hạn mức");
-        btnSaveLimits.getStyleClass().add("btn-primary");
+        Button btnSaveLimits = new Button("Lưu hạn mức", new FontIcon(MaterialDesignC.CONTENT_SAVE));
+        btnSaveLimits.getStyleClass().add("accent");
         btnSaveLimits.setOnAction(e -> {
-            dataService.updateDailyLimits(sliderWeekday.getValue(), sliderWeekend.getValue());
-            toastNotifier.accept(String.format("Đã cập nhật hạn mức: Ngày thường %.1fh - Cuối tuần %.1fh", sliderWeekday.getValue(), sliderWeekend.getValue()));
+            double weekday = Math.round(sliderWeekday.getValue() * 2.0) / 2.0;
+            double weekend = Math.round(sliderWeekend.getValue() * 2.0) / 2.0;
+            dataService.updateDailyLimits(weekday, weekend);
+            refreshTrackerList();
+            toastHandler.show(
+                    "Đã lưu hạn mức",
+                    String.format("T2 - T6: %.1f giờ/ngày • T7 - CN: %.1f giờ/ngày", weekday, weekend),
+                    ToastManager.ToastType.SUCCESS
+            );
         });
 
-        card.getChildren().addAll(cardTitle, cardSub, new Separator(), weekdayBox, weekendBox, note, btnSaveLimits);
+        card.getChildren().addAll(titleRow, cardSub, new Separator(), weekdayBox, weekendBox, note, btnSaveLimits);
         return card;
     }
 
     private VBox createCurfewCard() {
         VBox card = new VBox(14);
-        card.getStyleClass().add("card");
+        card.getStyleClass().add("fg-card");
 
-        Label cardTitle = new Label("🌙 Giờ giới nghiêm & Khóa ban đêm (Bedtime Lock)");
+        HBox titleRow = new HBox(8);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
+        FontIcon icon = new FontIcon(MaterialDesignW.WEATHER_NIGHT);
+        icon.setIconSize(20);
+        Label cardTitle = new Label("Giờ giới nghiêm ban đêm (Bedtime Curfew)");
         cardTitle.getStyleClass().add("card-title");
-        Label cardSub = new Label("Khóa hoàn toàn kết nối Internet ra bên ngoài của các máy con từ đêm đến sáng");
+        titleRow.getChildren().addAll(icon, cardTitle);
+
+        Label cardSub = new Label("Tự động ngắt mạng từ 21:30 đến 06:00 sáng giúp trẻ ngủ đúng giờ.");
         cardSub.getStyleClass().add("card-subtitle");
 
-        // Đọc cấu hình giờ giới nghiêm hiện tại từ database
         boolean initCurfewActive = true;
         String initStart = "21:30";
         String initEnd = "06:00";
         if (dataService.getTimeSchedules() != null && !dataService.getTimeSchedules().isEmpty()) {
             TimeSchedule ts = dataService.getTimeSchedules().get(0);
             initCurfewActive = ts.isActive();
-            if (ts.getCurfewStart() != null && !ts.getCurfewStart().isEmpty()) initStart = ts.getCurfewStart();
-            if (ts.getCurfewEnd() != null && !ts.getCurfewEnd().isEmpty()) initEnd = ts.getCurfewEnd();
+            if (ts.getCurfewStart() != null && ts.getCurfewStart().contains(":")) initStart = ts.getCurfewStart();
+            if (ts.getCurfewEnd() != null && ts.getCurfewEnd().contains(":")) initEnd = ts.getCurfewEnd();
         }
 
-        CheckBox cbEnableCurfew = new CheckBox("Kích hoạt chế độ khóa mạng ban đêm tự động");
-        cbEnableCurfew.setSelected(initCurfewActive);
-        cbEnableCurfew.setStyle("-fx-font-weight: bold; -fx-text-fill: #0F172A; -fx-font-size: 13px;");
+        ToggleSwitch toggleCurfew = new ToggleSwitch("Kích hoạt khóa mạng ban đêm tự động");
+        toggleCurfew.setSelected(initCurfewActive);
 
-        // --- BỘ CHỌN GIỜ LINH HOẠT ---
-        HBox timeRow = new HBox(20);
+        // Bộ chọn giờ bắt đầu & kết thúc
+        HBox timeRow = new HBox(24);
         timeRow.setAlignment(Pos.CENTER_LEFT);
 
-        // Giờ bắt đầu (Start Time)
-        VBox startBox = new VBox(6);
-        Label lblStart = new Label("Giờ bắt đầu khóa mạng:");
-        lblStart.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #475569;");
+        String[] startParts = initStart.split(":");
+        ComboBox<String> cbStartHour = createHourComboBox(startParts[0]);
+        ComboBox<String> cbStartMin = createMinuteComboBox(startParts.length > 1 ? startParts[1] : "30");
+        VBox startBox = new VBox(6,
+                new Label("Bắt đầu khóa mạng:"),
+                new HBox(6, cbStartHour, new Label(":"), cbStartMin)
+        );
 
-        HBox startPicker = new HBox(6);
-        startPicker.setAlignment(Pos.CENTER_LEFT);
-        ComboBox<String> cbStartHour = createHourComboBox(initStart.split(":")[0]);
-        ComboBox<String> cbStartMin = createMinuteComboBox(initStart.contains(":") ? initStart.split(":")[1] : "00");
-        Label colon1 = new Label(":");
-        colon1.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-        startPicker.getChildren().addAll(cbStartHour, colon1, cbStartMin);
-        startBox.getChildren().addAll(lblStart, startPicker);
-
-        // Giờ kết thúc (End Time)
-        VBox endBox = new VBox(6);
-        Label lblEnd = new Label("Giờ mở lại mạng:");
-        lblEnd.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #475569;");
-
-        HBox endPicker = new HBox(6);
-        endPicker.setAlignment(Pos.CENTER_LEFT);
-        ComboBox<String> cbEndHour = createHourComboBox(initEnd.split(":")[0]);
-        ComboBox<String> cbEndMin = createMinuteComboBox(initEnd.contains(":") ? initEnd.split(":")[1] : "00");
-        Label colon2 = new Label(":");
-        colon2.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-        endPicker.getChildren().addAll(cbEndHour, colon2, cbEndMin);
-        endBox.getChildren().addAll(lblEnd, endPicker);
+        String[] endParts = initEnd.split(":");
+        ComboBox<String> cbEndHour = createHourComboBox(endParts[0]);
+        ComboBox<String> cbEndMin = createMinuteComboBox(endParts.length > 1 ? endParts[1] : "00");
+        VBox endBox = new VBox(6,
+                new Label("Mở lại mạng sáng:"),
+                new HBox(6, cbEndHour, new Label(":"), cbEndMin)
+        );
 
         timeRow.getChildren().addAll(startBox, endBox);
 
-        // Nhãn tính toán động tổng thời gian khóa và trạng thái thực tế
         Label lblCurfewSummary = new Label();
-        lblCurfewSummary.setStyle("-fx-font-size: 12px; -fx-text-fill: #2563EB; -fx-font-weight: bold;");
+        lblCurfewSummary.setWrapText(true);
 
         Runnable updateSummary = () -> {
             String sh = cbStartHour.getValue();
@@ -208,104 +252,60 @@ public class TimeManagementView extends ScrollPane {
 
                 LocalTime now = LocalTime.now();
                 int nowMin = now.getHour() * 60 + now.getMinute();
-                boolean isCurfewNow = cbEnableCurfew.isSelected() && (sTotal < eTotal
+                boolean isCurfewNow = toggleCurfew.isSelected() && (sTotal < eTotal
                         ? (nowMin >= sTotal && nowMin < eTotal)
                         : (nowMin >= sTotal || nowMin < eTotal));
 
-                String durationText = String.format("⏰ Khóa Internet trong: %d giờ %02d phút (từ %s:%s đến %s:%s)", durH, durM, sh, sm, eh, em);
+                String durationText = String.format("Khung giờ khóa: %s:%s → %s:%s (%d giờ %02d phút)", sh, sm, eh, em, durH, durM);
+                lblCurfewSummary.getStyleClass().removeAll("kpi-hint-danger", "kpi-hint-success");
                 if (isCurfewNow) {
-                    lblCurfewSummary.setText(durationText + "\n🔴 HIỆN ĐANG TRONG GIỜ GIỚI NGHIÊM (INTERNET ĐANG BỊ NGẮT)");
-                    lblCurfewSummary.setStyle("-fx-font-size: 11px; -fx-text-fill: #DC2626; -fx-font-weight: bold;");
+                    lblCurfewSummary.setText(durationText + " • ĐANG TRONG GIỜ GIỚI NGHIÊM");
+                    lblCurfewSummary.getStyleClass().add("kpi-hint-danger");
                 } else {
                     lblCurfewSummary.setText(durationText);
-                    lblCurfewSummary.setStyle("-fx-font-size: 11px; -fx-text-fill: #2563EB; -fx-font-weight: bold;");
+                    lblCurfewSummary.getStyleClass().add("kpi-hint-success");
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         };
 
         cbStartHour.setOnAction(e -> updateSummary.run());
         cbStartMin.setOnAction(e -> updateSummary.run());
         cbEndHour.setOnAction(e -> updateSummary.run());
         cbEndMin.setOnAction(e -> updateSummary.run());
-        cbEnableCurfew.setOnAction(e -> updateSummary.run());
+        toggleCurfew.selectedProperty().addListener((obs, o, n) -> updateSummary.run());
         updateSummary.run();
 
-        // Mẫu giờ gợi ý chọn nhanh
+        // Preset nhanh
         HBox presetChips = new HBox(8);
         presetChips.setAlignment(Pos.CENTER_LEFT);
-        Label lblPresets = new Label("Gợi ý nhanh:");
-        lblPresets.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
+        Button chipDefault = createPresetChip("21:30 - 06:00 (Mặc định)", "21", "30", "06", "00", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
+        Button chipExam = createPresetChip("20:30 - 06:00 (Ôn thi)", "20", "30", "06", "00", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
+        Button chipWeekend = createPresetChip("22:30 - 07:00 (Cuối tuần)", "22", "30", "07", "00", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
+        presetChips.getChildren().addAll(chipDefault, chipExam, chipWeekend);
 
-        Button chip1 = createPresetChip("🌙 21:30 - 06:00 (Chuẩn)", "21", "30", "06", "00", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
-        Button chip2 = createPresetChip("📚 20:30 - 06:00 (Thi cử)", "20", "30", "06", "00", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
-        Button chip3 = createPresetChip("🎮 22:30 - 07:00 (Cuối tuần)", "22", "30", "07", "00", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
-        Button chip4 = createPresetChip("☀️ 12:00 - 13:30 (Trưa)", "12", "00", "13", "30", cbStartHour, cbStartMin, cbEndHour, cbEndMin, updateSummary);
-
-        presetChips.getChildren().addAll(lblPresets, chip1, chip2, chip3, chip4);
-
-        Label note = new Label("ℹ️ Trong khung giờ giới nghiêm, toàn bộ Internet ra bên ngoài bị ngắt triệt để (ngoại trừ các website học tập trong Danh sách trắng).");
-        note.setWrapText(true);
-        note.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B; -fx-background-color: #F8FAFC; -fx-padding: 8; -fx-background-radius: 6;");
-
-        Button btnSaveCurfew = new Button("Lưu giờ giới nghiêm");
-        btnSaveCurfew.getStyleClass().add("btn-primary");
+        Button btnSaveCurfew = new Button("Lưu giờ giới nghiêm", new FontIcon(MaterialDesignC.CONTENT_SAVE));
+        btnSaveCurfew.getStyleClass().add("accent");
         btnSaveCurfew.setOnAction(e -> {
-            boolean enabled = cbEnableCurfew.isSelected();
+            boolean enabled = toggleCurfew.isSelected();
             String start = cbStartHour.getValue() + ":" + cbStartMin.getValue();
             String end = cbEndHour.getValue() + ":" + cbEndMin.getValue();
             dataService.updateCurfew(enabled, start, end);
-            if (enabled) {
-                toastNotifier.accept("Đã bật giới nghiêm ban đêm từ " + start + " đến " + end + ". Internet sẽ tự động ngắt!");
-            } else {
-                toastNotifier.accept("Đã tắt chế độ giới nghiêm ban đêm.");
-            }
             updateSummary.run();
+            toastHandler.show(
+                    enabled ? "Đã bật giờ giới nghiêm" : "Đã tắt giờ giới nghiêm",
+                    enabled ? "Khóa mạng ban đêm từ " + start + " đến " + end + "." : "Chế độ giới nghiêm ban đêm đã tạm tắt.",
+                    enabled ? ToastManager.ToastType.SUCCESS : ToastManager.ToastType.WARNING
+            );
         });
 
-        card.getChildren().addAll(cardTitle, cardSub, new Separator(), cbEnableCurfew, timeRow, presetChips, lblCurfewSummary, note, btnSaveCurfew);
+        card.getChildren().addAll(titleRow, cardSub, new Separator(), toggleCurfew, timeRow, presetChips, lblCurfewSummary, btnSaveCurfew);
         return card;
-    }
-
-    private ComboBox<String> createHourComboBox(String initialValue) {
-        ComboBox<String> cb = new ComboBox<>();
-        for (int i = 0; i < 24; i++) {
-            cb.getItems().add(String.format("%02d", i));
-        }
-        cb.setValue(initialValue != null ? initialValue : "21");
-        cb.setPrefWidth(75);
-        cb.setStyle("-fx-font-size: 13px; -fx-font-weight: bold;");
-        return cb;
-    }
-
-    private ComboBox<String> createMinuteComboBox(String initialValue) {
-        ComboBox<String> cb = new ComboBox<>();
-        for (int i = 0; i < 60; i += 5) {
-            cb.getItems().add(String.format("%02d", i));
-        }
-        cb.setValue(initialValue != null ? initialValue : "00");
-        cb.setPrefWidth(75);
-        cb.setStyle("-fx-font-size: 13px; -fx-font-weight: bold;");
-        return cb;
-    }
-
-    private Button createPresetChip(String text, String sh, String sm, String eh, String em,
-                                    ComboBox<String> cbSh, ComboBox<String> cbSm,
-                                    ComboBox<String> cbEh, ComboBox<String> cbEm, Runnable callback) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: #F1F5F9; -fx-text-fill: #334155; -fx-font-size: 11px; -fx-padding: 3 8; -fx-background-radius: 6; -fx-cursor: hand;");
-        btn.setOnAction(e -> {
-            cbSh.setValue(sh);
-            cbSm.setValue(sm);
-            cbEh.setValue(eh);
-            cbEm.setValue(em);
-            callback.run();
-        });
-        return btn;
     }
 
     private VBox createDeviceTimeTrackerCard() {
         VBox card = new VBox(16);
-        card.getStyleClass().add("card");
+        card.getStyleClass().add("fg-card");
 
         HBox head = new HBox(12);
         head.setAlignment(Pos.CENTER_LEFT);
@@ -315,78 +315,52 @@ public class TimeManagementView extends ScrollPane {
         String dayDesc = isWeekend ? "Cuối tuần (T7 & CN)" : "Ngày trong tuần (T2 - T6)";
 
         VBox titleBox = new VBox(2);
-        Label cardTitle = new Label("📊 Tiến độ sử dụng thời gian hôm nay & Thưởng giờ theo từng máy");
+        Label cardTitle = new Label("Tiến độ sử dụng hôm nay & Thưởng giờ");
         cardTitle.getStyleClass().add("card-title");
-        Label cardSub = new Label("Hôm nay: " + dayDesc + " • Tự động ngắt kết nối Internet khi vượt quá hạn mức trong ngày.");
+        Label cardSub = new Label("Hôm nay: " + dayDesc + " • Theo dõi trực tiếp qua ProgressBar và cộng thưởng +30 phút khi con hoàn thành bài tập.");
         cardSub.getStyleClass().add("card-subtitle");
         titleBox.getChildren().addAll(cardTitle, cardSub);
 
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
 
-        // Nhóm nút thưởng thời gian cho tất cả thiết bị
-        HBox globalBonusBox = new HBox(8);
-        globalBonusBox.setAlignment(Pos.CENTER_RIGHT);
-
-        Label lblAll = new Label("🎁 Thưởng tất cả:");
-        lblAll.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B; -fx-font-weight: bold;");
-
-        Button btnBonusAll15 = new Button("+15p");
-        btnBonusAll15.getStyleClass().add("btn-outline");
-        btnBonusAll15.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
-        btnBonusAll15.setOnAction(e -> {
-            dataService.addBonusMinutesToAllDevices(15);
-            toastNotifier.accept("Đã thưởng thêm 15 phút cho tất cả các thiết bị!");
-        });
-
-        Button btnBonusAll30 = new Button("+30p");
-        btnBonusAll30.getStyleClass().add("btn-outline");
-        btnBonusAll30.setStyle("-fx-font-size: 11px; -fx-padding: 4 8; -fx-font-weight: bold; -fx-text-fill: #2563EB;");
+        Button btnBonusAll30 = new Button("+30 phút (Hoàn thành tốt bài tập)", new FontIcon(MaterialDesignG.GIFT_OUTLINE));
+        btnBonusAll30.getStyleClass().add("success");
         btnBonusAll30.setOnAction(e -> {
             dataService.addBonusMinutesToAllDevices(30);
-            toastNotifier.accept("Đã thưởng thêm 30 phút cho tất cả các thiết bị!");
+            refreshTrackerList();
+            toastHandler.show("Đã thưởng +30 phút", "Cộng thêm 30 phút cho tất cả thiết bị của con!", ToastManager.ToastType.SUCCESS);
         });
 
-        Button btnBonusAll60 = new Button("+1 giờ");
-        btnBonusAll60.getStyleClass().add("btn-outline");
-        btnBonusAll60.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
-        btnBonusAll60.setOnAction(e -> {
-            dataService.addBonusMinutesToAllDevices(60);
-            toastNotifier.accept("Đã thưởng thêm 1 giờ cho tất cả các thiết bị!");
-        });
-
-        Button btnResetBonusAll = new Button("🔄 Đặt lại thưởng");
-        btnResetBonusAll.getStyleClass().add("btn-outline");
-        btnResetBonusAll.setStyle("-fx-font-size: 11px; -fx-padding: 4 8; -fx-text-fill: #64748B;");
+        Button btnResetBonusAll = new Button("Đặt lại thưởng", new FontIcon(MaterialDesignR.REFRESH));
         btnResetBonusAll.setOnAction(e -> {
             dataService.resetAllBonusMinutes();
-            toastNotifier.accept("Đã đặt lại giờ thưởng hôm nay về mặc định!");
+            refreshTrackerList();
+            toastHandler.show("Đã đặt lại", "Giờ thưởng hôm nay của các thiết bị đã về 0.", ToastManager.ToastType.WARNING);
         });
 
-        globalBonusBox.getChildren().addAll(lblAll, btnBonusAll15, btnBonusAll30, btnBonusAll60, btnResetBonusAll);
-        head.getChildren().addAll(titleBox, sp, globalBonusBox);
+        HBox globalActions = new HBox(8, btnBonusAll30, btnResetBonusAll);
+        globalActions.setAlignment(Pos.CENTER_RIGHT);
 
-        VBox trackerList = new VBox(14);
-        refreshTrackerList(trackerList);
+        head.getChildren().addAll(titleBox, sp, globalActions);
 
-        // Lắng nghe để cập nhật tiến độ sử dụng thời gian của các thiết bị theo thời gian thực
-        dataService.getAccessLogs().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.AccessLog>) c -> {
-            javafx.application.Platform.runLater(() -> refreshTrackerList(trackerList));
-        });
-        dataService.getDevices().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.Device>) c -> {
-            javafx.application.Platform.runLater(() -> refreshTrackerList(trackerList));
-        });
+        trackerList = new VBox(12);
+        refreshTrackerList();
+
+        dataService.getAccessLogs().addListener((ListChangeListener<AccessLog>) c -> Platform.runLater(this::refreshTrackerList));
+        dataService.getDevices().addListener((ListChangeListener<Device>) c -> Platform.runLater(this::refreshTrackerList));
 
         card.getChildren().addAll(head, new Separator(), trackerList);
         return card;
     }
 
-    private void refreshTrackerList(VBox trackerList) {
+    private void refreshTrackerList() {
+        if (trackerList == null) return;
         trackerList.getChildren().clear();
 
         if (dataService.getDevices().isEmpty()) {
             Label empty = new Label("Chưa có thiết bị nào được kết nối trong hệ thống.");
-            empty.setStyle("-fx-text-fill: #64748B; -fx-font-size: 12px;");
+            empty.getStyleClass().add("card-subtitle");
             trackerList.getChildren().add(empty);
             return;
         }
@@ -397,9 +371,9 @@ public class TimeManagementView extends ScrollPane {
     }
 
     private VBox createDeviceTrackerRow(Device dev) {
-        VBox box = new VBox(8);
-        box.setPadding(new Insets(12, 14, 12, 14));
-        box.setStyle("-fx-background-color: #F8FAFC; -fx-background-radius: 10px; -fx-border-color: #E2E8F0; -fx-border-radius: 10px;");
+        VBox box = new VBox(10);
+        box.getStyleClass().add("sub-card");
+        box.setPadding(new Insets(14, 16, 14, 16));
 
         double spentHours = dataService.parseSpentHours(dev.getTimeSpentToday());
         double deviceLimitHours = dataService.getTodayDailyLimitHours(dev);
@@ -408,55 +382,52 @@ public class TimeManagementView extends ScrollPane {
         boolean isWarning = !isExceeded && progress >= 0.85;
         int bonusMin = dev.getBonusMinutes();
 
-        // 1. Hàng thông tin thiết bị, badge trạng thái & thời gian
         HBox topRow = new HBox(10);
         topRow.setAlignment(Pos.CENTER_LEFT);
 
-        String icon = "Điện thoại".equalsIgnoreCase(dev.getType()) ? "📱" : ("Máy tính bảng".equalsIgnoreCase(dev.getType()) ? "📱" : "💻");
-        Label lblIcon = new Label(icon);
-        lblIcon.setStyle("-fx-font-size: 18px;");
+        FontIcon devIcon = new FontIcon(resolveDeviceIcon(dev.getType()));
+        devIcon.setIconSize(20);
 
         Label lblName = new Label(dev.getName());
-        lblName.setStyle("-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: #1E293B;");
+        lblName.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
 
         Label lblIp = new Label("[" + dev.getIpAddress() + "]");
-        lblIp.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
+        lblIp.getStyleClass().add("card-subtitle");
 
-        topRow.getChildren().addAll(lblIcon, lblName, lblIp);
+        topRow.getChildren().addAll(devIcon, lblName, lblIp);
 
         if (bonusMin > 0) {
-            Label lblBonusBadge = new Label("🎁 +" + bonusMin + "m thưởng");
-            lblBonusBadge.setStyle("-fx-background-color: #DCFCE7; -fx-text-fill: #16A34A; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 6; -fx-background-radius: 6;");
+            Label lblBonusBadge = new Label("+" + bonusMin + " phút thưởng");
+            lblBonusBadge.getStyleClass().addAll("status-badge", "badge-success");
             topRow.getChildren().add(lblBonusBadge);
         }
 
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
-        topRow.getChildren().add(sp);
 
-        // Badge trạng thái mạng
         Label lblStatusBadge = new Label();
+        lblStatusBadge.getStyleClass().add("status-badge");
         if (isExceeded || dev.isBlocked()) {
-            lblStatusBadge.setText("⛔ ĐÃ NGẮT INTERNET (Hết giờ)");
-            lblStatusBadge.setStyle("-fx-background-color: #FEE2E2; -fx-text-fill: #DC2626; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 8; -fx-background-radius: 6;");
+            lblStatusBadge.setText("Hết giờ / Đã ngắt mạng");
+            lblStatusBadge.getStyleClass().add("badge-danger");
         } else if (isWarning) {
-            lblStatusBadge.setText("⚠️ SẮP HẾT HẠN MỨC");
-            lblStatusBadge.setStyle("-fx-background-color: #FEF3C7; -fx-text-fill: #D97706; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 8; -fx-background-radius: 6;");
+            lblStatusBadge.setText("Sắp hết hạn mức");
+            lblStatusBadge.getStyleClass().add("badge-warning");
         } else {
-            lblStatusBadge.setText("🟢 ĐANG HOẠT ĐỘNG");
-            lblStatusBadge.setStyle("-fx-background-color: #DCFCE7; -fx-text-fill: #16A34A; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 2 8; -fx-background-radius: 6;");
+            lblStatusBadge.setText("Đang hoạt động");
+            lblStatusBadge.getStyleClass().add("badge-success");
         }
 
-        String timeStr = dev.getTimeSpentToday() + " / " + String.format("%.1fh", deviceLimitHours);
+        String timeStr = String.format("%s / %.1fh", dev.getTimeSpentToday(), deviceLimitHours);
         Label lblTime = new Label(timeStr);
-        lblTime.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; " + (isExceeded ? "-fx-text-fill: #DC2626;" : (isWarning ? "-fx-text-fill: #D97706;" : "-fx-text-fill: #059669;")));
+        lblTime.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
 
-        topRow.getChildren().addAll(lblStatusBadge, lblTime);
+        topRow.getChildren().addAll(sp, lblStatusBadge, lblTime);
 
-        // 2. Thanh tiến độ
+        // Thanh đo tiến độ ProgressBar
         ProgressBar bar = new ProgressBar(progress);
         bar.setMaxWidth(Double.MAX_VALUE);
-        bar.setPrefHeight(9);
+        bar.setPrefHeight(10);
         if (isExceeded || dev.isBlocked()) {
             bar.setStyle("-fx-accent: #EF4444;");
         } else if (isWarning) {
@@ -465,30 +436,35 @@ public class TimeManagementView extends ScrollPane {
             bar.setStyle("-fx-accent: #2563EB;");
         }
 
-        // 3. Hàng điều khiển thưởng thêm hạn mức cho riêng thiết bị này
+        // Hàng nút thưởng giờ cho thiết bị
         HBox actionRow = new HBox(8);
         actionRow.setAlignment(Pos.CENTER_LEFT);
 
-        Label lblActionTitle = new Label("🎁 Thưởng thêm giờ hôm nay:");
-        lblActionTitle.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
+        Label lblActionTitle = new Label("Thưởng giờ hôm nay:");
+        lblActionTitle.getStyleClass().add("card-subtitle");
 
-        Button btnPlus15 = createBonusButton("+15 phút", () -> applyBonusToDevice(dev, 15));
-        Button btnPlus30 = createBonusButton("+30 phút", () -> applyBonusToDevice(dev, 30));
-        Button btnPlus60 = createBonusButton("+1 giờ", () -> applyBonusToDevice(dev, 60));
+        Button btnPlus15 = new Button("+15 phút");
+        btnPlus15.setOnAction(e -> applyBonusToDevice(dev, 15));
+
+        Button btnPlus30 = new Button("+30 phút (Hoàn thành bài tập)", new FontIcon(MaterialDesignG.GIFT_OUTLINE));
+        btnPlus30.getStyleClass().add("success");
+        btnPlus30.setOnAction(e -> applyBonusToDevice(dev, 30));
+
+        Button btnPlus60 = new Button("+1 giờ");
+        btnPlus60.setOnAction(e -> applyBonusToDevice(dev, 60));
 
         Button btnCustomBonus = new Button("Tùy chọn...");
-        btnCustomBonus.setStyle("-fx-background-color: #E2E8F0; -fx-text-fill: #334155; -fx-font-size: 11px; -fx-padding: 3 8; -fx-background-radius: 4; -fx-cursor: hand;");
         btnCustomBonus.setOnAction(e -> showCustomBonusDialog(dev));
 
         actionRow.getChildren().addAll(lblActionTitle, btnPlus15, btnPlus30, btnPlus60, btnCustomBonus);
 
         if (bonusMin > 0) {
-            Button btnResetDevBonus = new Button("↩ Hủy thưởng");
-            btnResetDevBonus.setStyle("-fx-background-color: transparent; -fx-text-fill: #DC2626; -fx-font-size: 11px; -fx-underline: true; -fx-cursor: hand; -fx-padding: 2 4;");
+            Button btnResetDevBonus = new Button("Hủy thưởng");
+            btnResetDevBonus.getStyleClass().add("danger");
             btnResetDevBonus.setOnAction(e -> {
-                dataService.addBonusMinutesToDevice(dev, -bonusMin);
-                toastNotifier.accept("Đã hủy giờ thưởng của " + dev.getName());
-                refreshCurrentTracker();
+                dataService.resetDeviceBonusMinutes(dev);
+                refreshTrackerList();
+                toastHandler.show("Đã hủy thưởng", "Đã đặt lại giờ thưởng của " + dev.getName(), ToastManager.ToastType.WARNING);
             });
             actionRow.getChildren().add(btnResetDevBonus);
         }
@@ -497,25 +473,22 @@ public class TimeManagementView extends ScrollPane {
         return box;
     }
 
-    private Button createBonusButton(String text, Runnable action) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: #FFFFFF; -fx-border-color: #CBD5E1; -fx-border-radius: 4; -fx-background-radius: 4; -fx-font-size: 11px; -fx-text-fill: #334155; -fx-padding: 3 8; -fx-cursor: hand;");
-        btn.setOnAction(e -> action.run());
-        return btn;
-    }
-
     private void applyBonusToDevice(Device dev, int minutes) {
         dataService.addBonusMinutesToDevice(dev, minutes);
         double newLimit = dataService.getTodayDailyLimitHours(dev);
-        toastNotifier.accept("Đã thưởng thêm +" + minutes + " phút cho " + dev.getName() + "! Hạn mức mới: " + String.format("%.1fh", newLimit));
-        refreshCurrentTracker();
+        refreshTrackerList();
+        toastHandler.show(
+                "Đã thưởng +" + minutes + " phút",
+                String.format("Thiết bị %s có hạn mức mới hôm nay: %.1f giờ.", dev.getName(), newLimit),
+                ToastManager.ToastType.SUCCESS
+        );
     }
 
     private void showCustomBonusDialog(Device dev) {
-        TextInputDialog dialog = new TextInputDialog("45");
+        TextInputDialog dialog = new TextInputDialog("30");
         dialog.setTitle("Thưởng thêm thời gian");
-        dialog.setHeaderText("Cộng thêm hạn mức sử dụng hôm nay cho:\n" + dev.getName() + " (" + dev.getIpAddress() + ")");
-        dialog.setContentText("Nhập số phút muốn cộng thêm:");
+        dialog.setHeaderText("Cộng thêm hạn mức sử dụng hôm nay cho " + dev.getName());
+        dialog.setContentText("Nhập số phút muốn cộng thêm (1 - 720):");
 
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(val -> {
@@ -524,24 +497,55 @@ public class TimeManagementView extends ScrollPane {
                 if (min > 0 && min <= 720) {
                     applyBonusToDevice(dev, min);
                 } else {
-                    toastNotifier.accept("Vui lòng nhập số phút hợp lệ (từ 1 đến 720 phút)!");
+                    toastHandler.show("Giá trị không hợp lệ", "Vui lòng nhập số phút từ 1 đến 720.", ToastManager.ToastType.WARNING);
                 }
-            } catch (Exception ex) {
-                toastNotifier.accept("Số phút nhập vào không hợp lệ!");
+            } catch (NumberFormatException ex) {
+                toastHandler.show("Giá trị không hợp lệ", "Vui lòng nhập một số nguyên hợp lệ.", ToastManager.ToastType.WARNING);
             }
         });
     }
 
-    private void refreshCurrentTracker() {
-        Node content = getContent();
-        if (content instanceof VBox) {
-            VBox box = (VBox) content;
-            if (box.getChildren().size() >= 3 && box.getChildren().get(2) instanceof VBox) {
-                VBox trackerCard = (VBox) box.getChildren().get(2);
-                if (trackerCard.getChildren().size() >= 3 && trackerCard.getChildren().get(2) instanceof VBox) {
-                    refreshTrackerList((VBox) trackerCard.getChildren().get(2));
-                }
-            }
+    private ComboBox<String> createHourComboBox(String initialValue) {
+        ComboBox<String> cb = new ComboBox<>();
+        for (int i = 0; i < 24; i++) {
+            cb.getItems().add(String.format("%02d", i));
         }
+        cb.setValue(initialValue != null ? initialValue : "21");
+        cb.setPrefWidth(76);
+        return cb;
+    }
+
+    private ComboBox<String> createMinuteComboBox(String initialValue) {
+        ComboBox<String> cb = new ComboBox<>();
+        for (int i = 0; i < 60; i += 5) {
+            cb.getItems().add(String.format("%02d", i));
+        }
+        cb.setValue(initialValue != null ? initialValue : "00");
+        cb.setPrefWidth(76);
+        return cb;
+    }
+
+    private Button createPresetChip(String text, String sh, String sm, String eh, String em,
+                                    ComboBox<String> cbSh, ComboBox<String> cbSm,
+                                    ComboBox<String> cbEh, ComboBox<String> cbEm, Runnable callback) {
+        Button btn = new Button(text);
+        btn.setOnAction(e -> {
+            cbSh.setValue(sh);
+            cbSm.setValue(sm);
+            cbEh.setValue(eh);
+            cbEm.setValue(em);
+            callback.run();
+        });
+        return btn;
+    }
+
+    private Ikon resolveDeviceIcon(String type) {
+        if (type == null) return MaterialDesignL.LAPTOP;
+        return switch (type.toLowerCase()) {
+            case "điện thoại" -> MaterialDesignC.CELLPHONE;
+            case "máy tính bảng" -> MaterialDesignT.TABLET;
+            case "máy tính để bàn" -> MaterialDesignD.DESKTOP_CLASSIC;
+            default -> MaterialDesignL.LAPTOP;
+        };
     }
 }

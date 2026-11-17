@@ -730,6 +730,17 @@ public class DataService {
     }
 
     /**
+     * Đặt lại số phút thưởng hôm nay về 0 cho một thiết bị cụ thể
+     */
+    public void resetDeviceBonusMinutes(Device device) {
+        if (device == null) return;
+        device.setBonusMinutes(0);
+        dbManager.updateDeviceBonusMinutes(device.getId(), 0);
+        checkDeviceDailyLimit(device);
+        addSystemLog("Đã hủy giờ thưởng hôm nay cho " + device.getName(), "Thưởng thời gian", "CẬP NHẬT");
+    }
+
+    /**
      * Đặt lại toàn bộ số phút thưởng hôm nay về 0
      */
     public void resetAllBonusMinutes() {

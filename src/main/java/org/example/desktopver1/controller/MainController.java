@@ -28,6 +28,7 @@ import org.example.desktopver1.view.AccessLogsView;
 import org.example.desktopver1.view.ContentFilterView;
 import org.example.desktopver1.view.DashboardView;
 import org.example.desktopver1.view.DeviceManagerView;
+import org.example.desktopver1.view.TimeManagementView;
 import org.example.desktopver1.view.ToastManager;
 import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.javafx.FontIcon;
@@ -56,12 +57,14 @@ public class MainController {
     private DashboardView dashboardView;
     private DeviceManagerView deviceManagerView;
     private ContentFilterView contentFilterView;
+    private TimeManagementView timeManagementView;
     private AccessLogsView accessLogsView;
 
     private ToggleGroup navGroup;
     private ToggleButton btnDashboard;
     private ToggleButton btnDevices;
     private ToggleButton btnFilter;
+    private ToggleButton btnTime;
     private ToggleButton btnLogs;
 
     private Label vpsStatusBadge;
@@ -89,6 +92,7 @@ public class MainController {
         dashboardView = new DashboardView(dataService, this::showToast, () -> navigateTo(accessLogsView, btnLogs));
         deviceManagerView = new DeviceManagerView(dataService, infoToast, this::showToast);
         contentFilterView = new ContentFilterView(dataService, infoToast, this::showToast);
+        timeManagementView = new TimeManagementView(dataService, infoToast, this::showToast);
         accessLogsView = new AccessLogsView(dataService, infoToast, this::showToast);
     }
 
@@ -148,11 +152,13 @@ public class MainController {
         btnDashboard = createNavToggle("Tổng quan (Dashboard)", MaterialDesignV.VIEW_DASHBOARD);
         btnDevices = createNavToggle("Quản lý Thiết bị", MaterialDesignD.DEVICES);
         btnFilter = createNavToggle("Bộ lọc Web & App", MaterialDesignS.SHIELD_LOCK);
+        btnTime = createNavToggle("Quản lý Thời gian", MaterialDesignC.CLOCK_OUTLINE);
         btnLogs = createNavToggle("Nhật ký truy cập", MaterialDesignF.FORMAT_LIST_BULLETED);
 
         btnDashboard.setOnAction(e -> navigateTo(dashboardView, btnDashboard));
         btnDevices.setOnAction(e -> navigateTo(deviceManagerView, btnDevices));
         btnFilter.setOnAction(e -> navigateTo(contentFilterView, btnFilter));
+        btnTime.setOnAction(e -> navigateTo(timeManagementView, btnTime));
         btnLogs.setOnAction(e -> navigateTo(accessLogsView, btnLogs));
 
         // Ngăn bỏ chọn toàn bộ nút trong ToggleGroup
@@ -162,7 +168,7 @@ public class MainController {
             }
         });
 
-        VBox navList = new VBox(4, btnDashboard, btnDevices, btnFilter, btnLogs);
+        VBox navList = new VBox(4, btnDashboard, btnDevices, btnFilter, btnTime, btnLogs);
 
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
