@@ -1,380 +1,416 @@
 package org.example.desktopver1.view;
 
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
+import atlantafx.base.controls.ToggleSwitch;
+import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.chart.PieChart;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.layout.*;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import org.example.desktopver1.model.AccessLog;
+import org.example.desktopver1.model.Device;
 import org.example.desktopver1.service.DataService;
-
-import java.util.function.Consumer;
+import org.kordamp.ikonli.Ikon;
+import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignA;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignB;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignC;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignL;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignS;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignT;
 
 /**
- * Giao diện Dashboard (Tổng quan):
- * - Banner trạng thái bảo vệ & nút khóa mạng khẩn cấp
- * - Thẻ KPI số liệu thống kê trực quan
- * - Biểu đồ PieChart phân bổ thời lượng sử dụng
- * - Danh sách sự kiện truy cập đáng chú ý gần nhất
+ * Màn hình Tổng quan (Dashboard):
+ * - Hàng trên: 3 thẻ KPI Cards (Thiết bị đang online, Số truy vấn bị chặn hôm nay, Trạng thái AI Engine ONNX)
+ * - Khối điều khiển nhanh Panic Lock & danh sách thiết bị con với ToggleSwitch khóa mạng tức thì gửi lệnh TCP xuống VPS
+ * - Hoạt động truy cập gần đây
  */
 public class DashboardView extends ScrollPane {
 
     private final DataService dataService;
-    private final Consumer<String> toastNotifier;
+    private final ToastManager.ToastHandler toastHandler;
     private final Runnable navigateToLogs;
 
-    private HBox statusBanner;
-    private Label bannerTitle;
-    private Label bannerDesc;
-    private Button btnToggleProtection;
-    private Button btnEmergency;
+    private Label lblOnlineDevicesValue;
+    private Label lblOnlineDevicesHint;
+    private Label lblBlockedTodayValue;
+    private Label lblBlockedTodayHint;
+    private Label lblAiEngineValue;
+    private Label lblAiEngineHint;
 
-    // Dữ liệu động cho Biểu đồ PieChart và Bảng thống kê KPI
-    private final ObservableList<PieChart.Data> chartData = FXCollections.observableArrayList();
-    private Label lblBlockedKpi;
-    private Label lblOnlineDevicesKpi;
-    private Label lblViolationKpi;
-    private Label lblTodayOnlineTime;
-    private VBox eventsList;
+    private ToggleSwitch switchGlobalPanic;
+    private ToggleSwitch switchAiProtection;
+    private HBox panicBanner;
+    private VBox quickDevicesList;
+    private VBox recentEventsList;
 
-    public DashboardView(DataService dataService, Consumer<String> toastNotifier, Runnable navigateToLogs) {
+    private boolean updatingGlobalSwitches = false;
+
+    public DashboardView(DataService dataService, ToastManager.ToastHandler toastHandler, Runnable navigateToLogs) {
         this.dataService = dataService;
-        this.toastNotifier = toastNotifier;
+        this.toastHandler = toastHandler;
         this.navigateToLogs = navigateToLogs;
 
         setFitToWidth(true);
-        setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+        getStyleClass().add("view-scroll");
 
-        VBox contentBox = new VBox(24);
+        VBox contentBox = new VBox(20);
         contentBox.getStyleClass().add("view-container");
 
-        // 1. Banner trạng thái bảo vệ
-        contentBox.getChildren().add(createStatusBanner());
+        // 1. Header
+        contentBox.getChildren().add(createHeader());
 
-        // 2. Hàng 4 thẻ thống kê KPI
-        contentBox.getChildren().add(createKpiGrid());
+        // 2. Hàng 3 KPI Cards
+        contentBox.getChildren().add(createKpiRow());
 
-        // 3. Khu vực biểu đồ và hoạt động gần đây
-        contentBox.getChildren().add(createChartsAndActivitySection());
+        // 3. Thanh Panic Lock toàn hệ thống & Công tắc AI Engine
+        contentBox.getChildren().add(createPanicControlBanner());
 
-        // 4. Mẹo an toàn internet
-        contentBox.getChildren().add(createSafetyTipCard());
+        // 4. Danh sách nhanh thiết bị con (ToggleSwitch Khóa mạng tức thì) + Sự kiện gần đây
+        contentBox.getChildren().add(createMainGrid());
 
         setContent(contentBox);
 
-        // Lắng nghe thay đổi trạng thái từ DataService
-        dataService.protectionActiveProperty().addListener((obs, oldVal, newVal) -> updateBannerStyle(newVal));
-        dataService.emergencyPauseProperty().addListener((obs, oldVal, newVal) -> updateEmergencyButton(newVal));
+        // Lắng nghe thay đổi dữ liệu an toàn luồng
+        dataService.protectionActiveProperty().addListener((obs, o, n) -> Platform.runLater(this::refreshStats));
+        dataService.emergencyPauseProperty().addListener((obs, o, n) -> Platform.runLater(this::refreshPanicBannerState));
+        dataService.getAccessLogs().addListener((ListChangeListener<AccessLog>) c -> Platform.runLater(this::refreshStats));
+        dataService.getDevices().addListener((ListChangeListener<Device>) c -> Platform.runLater(() -> {
+            refreshStats();
+            refreshQuickDevices();
+        }));
 
-        // Tự động làm mới PieChart và Thống kê khi có bản ghi SYNC_LOGS mới từ VPS
-        dataService.getAccessLogs().addListener((javafx.collections.ListChangeListener<AccessLog>) c -> {
-            javafx.application.Platform.runLater(this::refreshChartsAndStats);
-        });
-        dataService.getDevices().addListener((javafx.collections.ListChangeListener<org.example.desktopver1.model.Device>) c -> {
-            javafx.application.Platform.runLater(this::refreshChartsAndStats);
-        });
-
-        refreshChartsAndStats();
+        refreshStats();
+        refreshPanicBannerState();
+        refreshQuickDevices();
     }
 
-    private HBox createStatusBanner() {
-        statusBanner = new HBox(20);
-        statusBanner.setAlignment(Pos.CENTER_LEFT);
-
-        VBox textGroup = new VBox(4);
-        bannerTitle = new Label();
-        bannerTitle.getStyleClass().add("status-banner-title");
-        bannerDesc = new Label();
-        bannerDesc.getStyleClass().add("status-banner-desc");
-        textGroup.getChildren().addAll(bannerTitle, bannerDesc);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        btnToggleProtection = new Button();
-        btnToggleProtection.getStyleClass().add("btn-outline");
-
-        btnToggleProtection.setOnAction(e -> {
-            boolean nextState = !dataService.isProtectionActive();
-            dataService.toggleProtection(nextState);
-            toastNotifier.accept(nextState ? "Hệ thống bảo vệ đã được BẬT." : "Hệ thống bảo vệ đã TẠM DỪNG!");
-        });
-
-        btnEmergency = new Button("⚡ KHÓA MẠNG KHẨN CẤP");
-        btnEmergency.getStyleClass().add("btn-danger");
-        btnEmergency.setOnAction(e -> {
-            boolean nextEmergency = !dataService.isEmergencyPause();
-            dataService.toggleEmergencyPause(nextEmergency);
-            toastNotifier.accept(nextEmergency ? "ĐÃ KHÓA MẠNG TẤT CẢ THIẾT BỊ CỦA CON!" : "Đã hủy chế độ khóa mạng khẩn cấp.");
-        });
-
-        statusBanner.getChildren().addAll(textGroup, spacer, btnToggleProtection, btnEmergency);
-
-        updateBannerStyle(dataService.isProtectionActive());
-        updateEmergencyButton(dataService.isEmergencyPause());
-
-        return statusBanner;
+    private VBox createHeader() {
+        VBox box = new VBox(4);
+        Label title = new Label("Tổng quan Hệ thống (Dashboard)");
+        title.getStyleClass().add("page-title");
+        Label sub = new Label("Giám sát trạng thái thiết bị, bộ lọc AI Engine (ONNX) và khóa mạng tức thì qua TCP Socket.");
+        sub.getStyleClass().add("page-subtitle");
+        box.getChildren().addAll(title, sub);
+        return box;
     }
 
-    private void updateBannerStyle(boolean active) {
-        statusBanner.getStyleClass().removeAll("status-banner-active", "status-banner-paused");
-        if (active) {
-            statusBanner.getStyleClass().add("status-banner-active");
-            bannerTitle.setText("🛡️ Hệ thống bảo vệ mạng gia đình: ĐANG HOẠT ĐỘNG");
-            bannerDesc.setText("Bộ lọc nội dung độc hại & cơ chế giám sát thời gian thực đang bảo vệ tất cả thiết bị của trẻ.");
-            btnToggleProtection.setText("Tạm dừng bảo vệ");
-        } else {
-            statusBanner.getStyleClass().add("status-banner-paused");
-            bannerTitle.setText("⚠️ CẢNH BÁO: Hệ thống bảo vệ đang TẠM DỪNG!");
-            bannerDesc.setText("Các thiết bị của trẻ hiện không bị áp dụng bộ lọc web và giới hạn thời gian.");
-            btnToggleProtection.setText("Kích hoạt bảo vệ");
-        }
-    }
-
-    private void updateEmergencyButton(boolean isPaused) {
-        if (isPaused) {
-            btnEmergency.setText("🔓 MỞ KHÓA MẠNG LẠI");
-            btnEmergency.getStyleClass().removeAll("btn-danger");
-            btnEmergency.getStyleClass().add("btn-warning");
-        } else {
-            btnEmergency.setText("⚡ KHÓA MẠNG KHẨN CẤP");
-            btnEmergency.getStyleClass().removeAll("btn-warning");
-            btnEmergency.getStyleClass().add("btn-danger");
-        }
-    }
-
-    private GridPane createKpiGrid() {
+    private GridPane createKpiRow() {
         GridPane grid = new GridPane();
         grid.setHgap(16);
         grid.setVgap(16);
 
-        ColumnConstraints col1 = new ColumnConstraints();
-        col1.setPercentWidth(25);
-        ColumnConstraints col2 = new ColumnConstraints();
-        col2.setPercentWidth(25);
-        ColumnConstraints col3 = new ColumnConstraints();
-        col3.setPercentWidth(25);
-        ColumnConstraints col4 = new ColumnConstraints();
-        col4.setPercentWidth(25);
-        grid.getColumnConstraints().addAll(col1, col2, col3, col4);
+        for (int i = 0; i < 3; i++) {
+            ColumnConstraints col = new ColumnConstraints();
+            col.setPercentWidth(33.333);
+            grid.getColumnConstraints().add(col);
+        }
 
-        lblTodayOnlineTime = new Label(dataService.getTotalTimeSpentTodayFormatted());
-        lblTodayOnlineTime.getStyleClass().add("kpi-value");
-        grid.add(createKpiCardWithLabel("⏱️", "Thời gian online hôm nay", lblTodayOnlineTime, "Tổng thời lượng các thiết bị", false), 0, 0);
+        lblOnlineDevicesValue = new Label("0 / 0");
+        lblOnlineDevicesValue.getStyleClass().add("kpi-value");
+        lblOnlineDevicesHint = new Label("Đang kết nối qua WireGuard / LAN");
+        lblOnlineDevicesHint.getStyleClass().add("kpi-hint-success");
 
-        lblBlockedKpi = new Label(dataService.getTotalBlockedEventsCount() + " lần");
-        lblBlockedKpi.getStyleClass().add("kpi-value");
-        grid.add(createKpiCardWithLabel("🛡️", "Số lượt trang đã chặn", lblBlockedKpi, "+8 lần so với hôm qua", false), 1, 0);
+        lblBlockedTodayValue = new Label("0");
+        lblBlockedTodayValue.getStyleClass().add("kpi-value");
+        lblBlockedTodayHint = new Label("Truy vấn độc hại / vi phạm đã chặn");
+        lblBlockedTodayHint.getStyleClass().add("kpi-hint-danger");
 
-        lblOnlineDevicesKpi = new Label(dataService.getOnlineDeviceCount() + " / " + dataService.getDevices().size());
-        lblOnlineDevicesKpi.getStyleClass().add("kpi-value");
-        grid.add(createKpiCardWithLabel("💻", "Thiết bị trẻ đang online", lblOnlineDevicesKpi, "Đang kết nối qua WireGuard/Wi-Fi", false), 2, 0);
+        lblAiEngineValue = new Label("Đang hoạt động");
+        lblAiEngineValue.getStyleClass().add("kpi-value");
+        lblAiEngineHint = new Label("ONNX Runtime • Phân tích tên miền real-time");
+        lblAiEngineHint.getStyleClass().add("kpi-hint-success");
 
-        lblViolationKpi = new Label("0 lần");
-        lblViolationKpi.getStyleClass().add("kpi-value");
-        grid.add(createKpiCardWithLabel("⚠️", "Cảnh báo vi phạm", lblViolationKpi, "Cố truy cập web cấm", true), 3, 0);
+        grid.add(createKpiCard("Thiết bị đang online", lblOnlineDevicesValue, lblOnlineDevicesHint, MaterialDesignD.DEVICES, "kpi-icon-blue"), 0, 0);
+        grid.add(createKpiCard("Số truy vấn bị chặn hôm nay", lblBlockedTodayValue, lblBlockedTodayHint, MaterialDesignS.SHIELD_ALERT, "kpi-icon-red"), 1, 0);
+        grid.add(createKpiCard("Trạng thái AI Engine (ONNX)", lblAiEngineValue, lblAiEngineHint, MaterialDesignB.BRAIN, "kpi-icon-green"), 2, 0);
 
         return grid;
     }
 
-    private VBox createKpiCard(String icon, String title, String value, String hint, boolean isDangerHint) {
-        Label lblValue = new Label(value);
-        lblValue.getStyleClass().add("kpi-value");
-        return createKpiCardWithLabel(icon, title, lblValue, hint, isDangerHint);
-    }
-
-    private VBox createKpiCardWithLabel(String icon, String title, Label lblValue, String hint, boolean isDangerHint) {
-        VBox card = new VBox(6);
+    private VBox createKpiCard(String title, Label valueLabel, Label hintLabel, Ikon iconCode, String iconColorClass) {
+        VBox card = new VBox(8);
         card.getStyleClass().add("kpi-card");
 
         HBox topRow = new HBox(10);
         topRow.setAlignment(Pos.CENTER_LEFT);
 
-        Label lblIcon = new Label(icon);
-        lblIcon.setStyle("-fx-font-size: 20px;");
+        StackPane iconBox = new StackPane();
+        iconBox.getStyleClass().addAll("kpi-icon-box", iconColorClass);
+        FontIcon icon = new FontIcon(iconCode);
+        icon.setIconSize(20);
+        iconBox.getChildren().add(icon);
 
         Label lblTitle = new Label(title);
         lblTitle.getStyleClass().add("kpi-title");
 
-        topRow.getChildren().addAll(lblIcon, lblTitle);
-
-        Label lblHint = new Label(hint);
-        lblHint.getStyleClass().add(isDangerHint ? "kpi-hint-danger" : "kpi-hint");
-
-        card.getChildren().addAll(topRow, lblValue, lblHint);
+        topRow.getChildren().addAll(iconBox, lblTitle);
+        card.getChildren().addAll(topRow, valueLabel, hintLabel);
         return card;
     }
 
-    private HBox createChartsAndActivitySection() {
-        HBox box = new HBox(20);
+    private HBox createPanicControlBanner() {
+        panicBanner = new HBox(20);
+        panicBanner.setAlignment(Pos.CENTER_LEFT);
+        panicBanner.getStyleClass().add("panic-banner");
 
-        // Cột trái: Biểu đồ tròn
-        VBox chartCard = new VBox(14);
-        chartCard.getStyleClass().add("card");
-        HBox.setHgrow(chartCard, Priority.ALWAYS);
+        FontIcon shieldIcon = new FontIcon(MaterialDesignS.SHIELD_LOCK);
+        shieldIcon.setIconSize(26);
+        shieldIcon.setStyle("-fx-icon-color: #DC2626;");
 
-        Label chartTitle = new Label("Phân bổ thời lượng sử dụng Internet");
-        chartTitle.getStyleClass().add("card-title");
-        Label chartSub = new Label("Thống kê theo lưu lượng và danh mục truy cập hôm nay");
-        chartSub.getStyleClass().add("card-subtitle");
+        VBox textGroup = new VBox(2);
+        Label lblTitle = new Label("Khóa mạng tức thì (Panic Lock)");
+        lblTitle.getStyleClass().add("card-title");
+        Label lblDesc = new Label("Ngắt kết nối Internet khẩn cấp toàn bộ thiết bị con hoặc bật/tắt AI Engine bảo vệ.");
+        lblDesc.getStyleClass().add("card-subtitle");
+        textGroup.getChildren().addAll(lblTitle, lblDesc);
 
-        PieChart pieChart = new PieChart(chartData);
-        pieChart.setPrefHeight(280);
-        pieChart.setLegendVisible(true);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        chartCard.getChildren().addAll(chartTitle, chartSub, pieChart);
+        switchAiProtection = new ToggleSwitch("AI Engine (ONNX)");
+        switchAiProtection.setSelected(dataService.isProtectionActive());
+        switchAiProtection.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            if (updatingGlobalSwitches) return;
+            dataService.toggleProtection(newVal);
+            toastHandler.show(
+                    "AI Engine (ONNX)",
+                    newVal ? "Đã kích hoạt bảo vệ và lọc DNS real-time." : "Đã tạm dừng hệ thống bảo vệ.",
+                    newVal ? ToastManager.ToastType.SUCCESS : ToastManager.ToastType.WARNING
+            );
+        });
 
-        // Cột phải: Danh sách sự kiện gần nhất
+        switchGlobalPanic = new ToggleSwitch("Panic Lock (Khóa tất cả)");
+        switchGlobalPanic.setSelected(dataService.isEmergencyPause());
+        switchGlobalPanic.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            if (updatingGlobalSwitches) return;
+            dataService.toggleEmergencyPause(newVal);
+            refreshQuickDevices();
+            toastHandler.show(
+                    newVal ? "Đã kích hoạt Panic Lock" : "Đã mở khóa mạng",
+                    newVal ? "Đã gửi lệnh khóa Internet tất cả thiết bị xuống VPS." : "Đã khôi phục kết nối Internet cho các thiết bị.",
+                    newVal ? ToastManager.ToastType.DANGER : ToastManager.ToastType.SUCCESS
+            );
+        });
+
+        panicBanner.getChildren().addAll(shieldIcon, textGroup, spacer, switchAiProtection, switchGlobalPanic);
+        return panicBanner;
+    }
+
+    private HBox createMainGrid() {
+        HBox row = new HBox(20);
+
+        // Cột trái: Danh sách nhanh các thiết bị con kèm ToggleSwitch Khóa mạng tức thì
+        VBox devicesCard = new VBox(14);
+        devicesCard.getStyleClass().add("fg-card");
+        HBox.setHgrow(devicesCard, Priority.ALWAYS);
+
+        HBox devHeader = new HBox(10);
+        devHeader.setAlignment(Pos.CENTER_LEFT);
+        FontIcon devIcon = new FontIcon(MaterialDesignL.LAPTOP);
+        devIcon.setIconSize(18);
+        VBox devTitleBox = new VBox(2);
+        Label devTitle = new Label("Thiết bị con & Khóa mạng tức thì");
+        devTitle.getStyleClass().add("card-title");
+        Label devSub = new Label("Gạt công tắc để gửi lệnh DEVICE_BLOCK qua TCP Socket xuống VPS");
+        devSub.getStyleClass().add("card-subtitle");
+        devTitleBox.getChildren().addAll(devTitle, devSub);
+        devHeader.getChildren().addAll(devIcon, devTitleBox);
+
+        quickDevicesList = new VBox(10);
+        devicesCard.getChildren().addAll(devHeader, quickDevicesList);
+
+        // Cột phải: Hoạt động truy cập gần đây
         VBox eventsCard = new VBox(14);
-        eventsCard.getStyleClass().add("card");
-        eventsCard.setPrefWidth(420);
+        eventsCard.getStyleClass().add("fg-card");
+        eventsCard.setPrefWidth(390);
+        eventsCard.setMinWidth(340);
 
-        HBox eventHeader = new HBox();
+        HBox eventHeader = new HBox(10);
         eventHeader.setAlignment(Pos.CENTER_LEFT);
-
-        VBox titleBox = new VBox(2);
-        Label eventsTitle = new Label("Hoạt động truy cập gần đây");
+        VBox eventTitleBox = new VBox(2);
+        Label eventsTitle = new Label("Truy cập gần đây");
         eventsTitle.getStyleClass().add("card-title");
-        Label eventsSub = new Label("Các bản ghi từ thiết bị của trẻ");
+        Label eventsSub = new Label("Đồng bộ real-time từ DNS Firewall");
         eventsSub.getStyleClass().add("card-subtitle");
-        titleBox.getChildren().addAll(eventsTitle, eventsSub);
+        eventTitleBox.getChildren().addAll(eventsTitle, eventsSub);
 
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
 
-        Button btnViewAll = new Button("Xem tất cả →");
-        btnViewAll.getStyleClass().add("btn-outline");
-        btnViewAll.setStyle("-fx-font-size: 11px; -fx-padding: 5 10;");
+        Button btnViewAll = new Button("Xem tất cả");
+        btnViewAll.setGraphic(new FontIcon(MaterialDesignA.ARROW_RIGHT));
         btnViewAll.setOnAction(e -> {
             if (navigateToLogs != null) {
                 navigateToLogs.run();
             }
         });
 
-        eventHeader.getChildren().addAll(titleBox, sp, btnViewAll);
+        eventHeader.getChildren().addAll(eventTitleBox, sp, btnViewAll);
 
-        eventsList = new VBox(10);
-        eventsCard.getChildren().addAll(eventHeader, eventsList);
+        recentEventsList = new VBox(10);
+        eventsCard.getChildren().addAll(eventHeader, recentEventsList);
 
-        box.getChildren().addAll(chartCard, eventsCard);
-        return box;
+        row.getChildren().addAll(devicesCard, eventsCard);
+        return row;
     }
 
-    /**
-     * Tự động làm mới dữ liệu biểu đồ tròn PieChart, thẻ KPI và bảng sự kiện gần đây
-     * Được gọi qua Platform.runLater() khi luồng Socket nhận mảng SYNC_LOGS.
-     */
-    public void refreshChartsAndStats() {
-        int blockedCount = 0;
-        int allowedCount = 0;
-        int eduCount = 0;
-        int entertainmentCount = 0;
-
-        for (AccessLog log : dataService.getAccessLogs()) {
-            if ("ĐÃ CHẶN".equalsIgnoreCase(log.getAction())) {
-                blockedCount++;
-            } else {
-                allowedCount++;
-                String d = log.getDomain() != null ? log.getDomain().toLowerCase() : "";
-                if (d.contains("khan") || d.contains("olm") || d.contains("vietjack") || d.contains("hocmai") || d.contains("coursera") || d.contains("scratch")) {
-                    eduCount++;
-                } else if (d.contains("youtube") || d.contains("googlevideo") || d.contains("ytimg") || d.contains("facebook") || d.contains("fbcdn") || d.contains("tiktok")) {
-                    entertainmentCount++;
+    private void refreshPanicBannerState() {
+        updatingGlobalSwitches = true;
+        try {
+            boolean paused = dataService.isEmergencyPause();
+            if (switchGlobalPanic != null) {
+                switchGlobalPanic.setSelected(paused);
+            }
+            if (panicBanner != null) {
+                panicBanner.getStyleClass().remove("panic-banner-locked");
+                if (paused) {
+                    panicBanner.getStyleClass().add("panic-banner-locked");
                 }
             }
+            if (switchAiProtection != null) {
+                switchAiProtection.setSelected(dataService.isProtectionActive());
+            }
+        } finally {
+            updatingGlobalSwitches = false;
+        }
+    }
+
+    private void refreshQuickDevices() {
+        if (quickDevicesList == null) return;
+        quickDevicesList.getChildren().clear();
+
+        if (dataService.getDevices().isEmpty()) {
+            Label empty = new Label("Chưa có thiết bị nào được thêm vào hệ thống.");
+            empty.getStyleClass().add("card-subtitle");
+            quickDevicesList.getChildren().add(empty);
+            return;
         }
 
-        int generalCount = allowedCount - eduCount - entertainmentCount;
-        if (generalCount < 0) generalCount = 0;
+        for (Device device : dataService.getDevices()) {
+            quickDevicesList.getChildren().add(createQuickDeviceRow(device));
+        }
+    }
 
-        chartData.clear();
-        if (blockedCount > 0) {
-            chartData.add(new PieChart.Data("Đã chặn vi phạm (" + blockedCount + ")", blockedCount));
+    private HBox createQuickDeviceRow(Device device) {
+        HBox row = new HBox(14);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.getStyleClass().add("sub-card");
+
+        FontIcon devIcon = new FontIcon(resolveDeviceIcon(device.getType()));
+        devIcon.setIconSize(22);
+
+        VBox info = new VBox(2);
+        HBox.setHgrow(info, Priority.ALWAYS);
+
+        HBox nameRow = new HBox(8);
+        nameRow.setAlignment(Pos.CENTER_LEFT);
+        Label lblName = new Label(device.getName());
+        lblName.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+
+        Label lblStatus = new Label(device.getStatus());
+        lblStatus.getStyleClass().add("status-badge");
+        lblStatus.getStyleClass().add("Trực tuyến".equalsIgnoreCase(device.getStatus()) ? "badge-success" : "badge-neutral");
+        nameRow.getChildren().addAll(lblName, lblStatus);
+
+        Label lblMeta = new Label("IP: " + device.getIpAddress() + " • Hôm nay: " + device.getTimeSpentToday());
+        lblMeta.getStyleClass().add("card-subtitle");
+        info.getChildren().addAll(nameRow, lblMeta);
+
+        ToggleSwitch panicSwitch = new ToggleSwitch("Khóa mạng");
+        panicSwitch.setSelected(device.isBlocked());
+        panicSwitch.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            if (device.isBlocked() != newVal) {
+                dataService.toggleDeviceBlock(device);
+                toastHandler.show(
+                        newVal ? "Đã khóa mạng thiết bị" : "Đã mở khóa mạng",
+                        (newVal ? "Đã gửi lệnh ngắt Internet: " : "Đã khôi phục Internet: ") + device.getName(),
+                        newVal ? ToastManager.ToastType.WARNING : ToastManager.ToastType.SUCCESS
+                );
+            }
+        });
+
+        row.getChildren().addAll(devIcon, info, panicSwitch);
+        return row;
+    }
+
+    private void refreshStats() {
+        int totalDevices = dataService.getDevices().size();
+        int onlineDevices = dataService.getOnlineDeviceCount();
+        int blockedToday = dataService.getTotalBlockedEventsCount();
+        boolean aiActive = dataService.isProtectionActive();
+
+        if (lblOnlineDevicesValue != null) {
+            lblOnlineDevicesValue.setText(onlineDevices + " / " + totalDevices);
         }
-        if (eduCount > 0) {
-            chartData.add(new PieChart.Data("Học tập trực tuyến (" + eduCount + ")", eduCount));
+        if (lblBlockedTodayValue != null) {
+            lblBlockedTodayValue.setText(String.valueOf(blockedToday));
         }
-        if (entertainmentCount > 0) {
-            chartData.add(new PieChart.Data("Video & MXH (" + entertainmentCount + ")", entertainmentCount));
+        if (lblAiEngineValue != null) {
+            lblAiEngineValue.setText(aiActive ? "Đang hoạt động" : "Tạm dừng");
         }
-        if (generalCount > 0 || chartData.isEmpty()) {
-            int displayGen = generalCount > 0 ? generalCount : 1;
-            chartData.add(new PieChart.Data("Duyệt web an toàn (" + displayGen + ")", displayGen));
+        if (lblAiEngineHint != null) {
+            lblAiEngineHint.getStyleClass().removeAll("kpi-hint-success", "kpi-hint-danger");
+            lblAiEngineHint.getStyleClass().add(aiActive ? "kpi-hint-success" : "kpi-hint-danger");
+            lblAiEngineHint.setText(aiActive ? "ONNX Runtime • Đang phân tích lưu lượng" : "ONNX Runtime • Bộ lọc tạm ngưng");
         }
 
-        if (lblTodayOnlineTime != null) {
-            lblTodayOnlineTime.setText(dataService.getTotalTimeSpentTodayFormatted());
-        }
-        if (lblBlockedKpi != null) {
-            lblBlockedKpi.setText(dataService.getTotalBlockedEventsCount() + " lần");
-        }
-        if (lblOnlineDevicesKpi != null) {
-            lblOnlineDevicesKpi.setText(dataService.getOnlineDeviceCount() + " / " + dataService.getDevices().size());
-        }
-        if (lblViolationKpi != null) {
-            lblViolationKpi.setText(blockedCount + " lần");
-        }
+        refreshPanicBannerState();
 
-        if (eventsList != null) {
-            eventsList.getChildren().clear();
+        if (recentEventsList != null) {
+            recentEventsList.getChildren().clear();
             int max = Math.min(5, dataService.getAccessLogs().size());
-            for (int i = 0; i < max; i++) {
-                AccessLog log = dataService.getAccessLogs().get(i);
-                eventsList.getChildren().add(createEventRow(log));
+            if (max == 0) {
+                Label empty = new Label("Chưa có sự kiện truy cập nào.");
+                empty.getStyleClass().add("card-subtitle");
+                recentEventsList.getChildren().add(empty);
+            } else {
+                for (int i = 0; i < max; i++) {
+                    recentEventsList.getChildren().add(createEventRow(dataService.getAccessLogs().get(i)));
+                }
             }
         }
     }
 
     private HBox createEventRow(AccessLog log) {
-        HBox row = new HBox(12);
+        HBox row = new HBox(10);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPadding(new Insets(10, 12, 10, 12));
-        row.setStyle("-fx-background-color: #F8FAFC; -fx-background-radius: 8px; -fx-border-color: #E2E8F0; -fx-border-radius: 8px;");
+        row.getStyleClass().add("sub-card");
 
-        VBox info = new VBox(3);
+        VBox info = new VBox(2);
         HBox.setHgrow(info, Priority.ALWAYS);
 
         Label lblDomain = new Label(log.getDomain());
-        lblDomain.setStyle("-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: #1E293B;");
-
+        lblDomain.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
         Label lblMeta = new Label(log.getDeviceName() + " • " + log.getTimestamp());
-        lblMeta.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748B;");
-
+        lblMeta.getStyleClass().add("card-subtitle");
         info.getChildren().addAll(lblDomain, lblMeta);
 
         Label lblBadge = new Label(log.getAction());
-        lblBadge.getStyleClass().add("badge");
-        if ("ĐÃ CHẶN".equalsIgnoreCase(log.getAction())) {
-            lblBadge.getStyleClass().add("badge-danger");
-        } else {
-            lblBadge.getStyleClass().add("badge-success");
-        }
+        lblBadge.getStyleClass().add("status-badge");
+        lblBadge.getStyleClass().add("ĐÃ CHẶN".equalsIgnoreCase(log.getAction()) ? "badge-danger" : "badge-success");
 
         row.getChildren().addAll(info, lblBadge);
         return row;
     }
 
-    private HBox createSafetyTipCard() {
-        HBox card = new HBox(14);
-        card.setAlignment(Pos.CENTER_LEFT);
-        card.setPadding(new Insets(16, 20, 16, 20));
-        card.setStyle("-fx-background-color: #EFF6FF; -fx-background-radius: 10px; -fx-border-color: #BFDBFE; -fx-border-radius: 10px;");
-
-        Label lblTipIcon = new Label("💡");
-        lblTipIcon.setStyle("-fx-font-size: 24px;");
-
-        VBox tipText = new VBox(2);
-        Label tipTitle = new Label("Mẹo bảo vệ sức khỏe và an toàn số cho con");
-        tipTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: #1E40AF;");
-        Label tipContent = new Label("Các chuyên gia khuyến cáo trẻ em nên nghỉ ngơi sau mỗi 45 phút học tập online và tắt màn hình ít nhất 60 phút trước giờ đi ngủ.");
-        tipContent.setStyle("-fx-font-size: 12px; -fx-text-fill: #1E3A8A;");
-        tipText.getChildren().addAll(tipTitle, tipContent);
-
-        card.getChildren().addAll(lblTipIcon, tipText);
-        return card;
+    private Ikon resolveDeviceIcon(String type) {
+        if (type == null) return MaterialDesignL.LAPTOP;
+        return switch (type.toLowerCase()) {
+            case "điện thoại" -> MaterialDesignC.CELLPHONE;
+            case "máy tính bảng" -> MaterialDesignT.TABLET;
+            case "máy tính để bàn" -> MaterialDesignD.DESKTOP_CLASSIC;
+            default -> MaterialDesignL.LAPTOP;
+        };
     }
 }

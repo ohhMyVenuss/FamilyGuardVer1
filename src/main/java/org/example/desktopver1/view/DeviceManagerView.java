@@ -1,5 +1,6 @@
 package org.example.desktopver1.view;
 
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
@@ -13,6 +14,17 @@ import javafx.stage.FileChooser;
 import org.example.desktopver1.model.Device;
 import org.example.desktopver1.network.VpsClientService;
 import org.example.desktopver1.service.DataService;
+import org.kordamp.ikonli.Ikon;
+import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignC;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignE;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignL;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignP;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignQ;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignR;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignS;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignT;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -33,12 +45,14 @@ public class DeviceManagerView extends ScrollPane {
 
     private final DataService dataService;
     private final Consumer<String> toastNotifier;
+    private final ToastManager.ToastHandler toastHandler;
     private VBox devicesContainer;
     private Dialog<?> waitingDialog;
 
-    public DeviceManagerView(DataService dataService, Consumer<String> toastNotifier) {
+    public DeviceManagerView(DataService dataService, Consumer<String> toastNotifier, ToastManager.ToastHandler toastHandler) {
         this.dataService = dataService;
         this.toastNotifier = toastNotifier;
+        this.toastHandler = toastHandler;
 
         // Lắng nghe sự kiện cấp cấu hình WireGuard từ VPS
         VpsClientService vps = dataService.getVpsClient() != null ? dataService.getVpsClient() : VpsClientService.getInstance();
@@ -69,9 +83,9 @@ public class DeviceManagerView extends ScrollPane {
         });
 
         setFitToWidth(true);
-        setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+        getStyleClass().add("view-scroll");
 
-        VBox contentBox = new VBox(24);
+        VBox contentBox = new VBox(20);
         contentBox.getStyleClass().add("view-container");
 
         // Tiêu đề & thanh công cụ
@@ -94,28 +108,26 @@ public class DeviceManagerView extends ScrollPane {
 
         VBox titleBox = new VBox(4);
         Label title = new Label("Quản Lý Thiết Bị Trẻ Em");
-        title.getStyleClass().add("header-welcome");
+        title.getStyleClass().add("page-title");
         Label sub = new Label("Giám sát và kiểm soát quyền truy cập Internet theo từng thiết bị trong gia đình.");
-        sub.getStyleClass().add("header-subtitle");
+        sub.getStyleClass().add("page-subtitle");
         titleBox.getChildren().addAll(title, sub);
 
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
 
-        Button btnScan = new Button("🔍 Quét mạng LAN");
-        btnScan.getStyleClass().add("btn-outline");
+        Button btnScan = new Button("Quét mạng LAN", new FontIcon(MaterialDesignR.RADAR));
         btnScan.setOnAction(e -> {
             dataService.recalculateAllDevicesUsageTime();
             refreshDevicesList();
-            toastNotifier.accept("Đang quét dải mạng 192.168.1.0/24 & cập nhật thời gian sử dụng các thiết bị.");
+            toastHandler.show("Quét mạng LAN", "Đang quét dải mạng & cập nhật thời gian sử dụng các thiết bị.", ToastManager.ToastType.SUCCESS);
         });
 
-        Button btnAddManual = new Button("+ Thêm thủ công");
-        btnAddManual.getStyleClass().add("btn-outline");
+        Button btnAddManual = new Button("Thêm thủ công", new FontIcon(MaterialDesignP.PLUS));
         btnAddManual.setOnAction(e -> showAddDeviceDialog());
 
-        Button btnAddWireGuard = new Button("📱 + Cấp WireGuard tự động");
-        btnAddWireGuard.getStyleClass().add("btn-primary");
+        Button btnAddWireGuard = new Button("Cấp WireGuard tự động", new FontIcon(MaterialDesignQ.QRCODE));
+        btnAddWireGuard.getStyleClass().add("accent");
         btnAddWireGuard.setOnAction(e -> showAutoWireGuardDialog());
 
         HBox btnGroup = new HBox(10, btnScan, btnAddManual, btnAddWireGuard);
@@ -134,12 +146,15 @@ public class DeviceManagerView extends ScrollPane {
 
     private HBox createDeviceCard(Device device) {
         HBox card = new HBox(18);
-        card.getStyleClass().add("card");
+        card.getStyleClass().add("fg-card");
         card.setAlignment(Pos.CENTER_LEFT);
 
         // Icon thiết bị
-        Label lblIcon = new Label(getDeviceIcon(device.getType()));
-        lblIcon.setStyle("-fx-font-size: 32px; -fx-padding: 6 12; -fx-background-color: #F1F5F9; -fx-background-radius: 10px;");
+        StackPane iconBox = new StackPane();
+        iconBox.getStyleClass().addAll("kpi-icon-box", "kpi-icon-blue");
+        FontIcon devIcon = new FontIcon(getDeviceIkon(device.getType()));
+        devIcon.setIconSize(22);
+        iconBox.getChildren().add(devIcon);
 
         // Chi tiết thiết bị
         VBox infoBox = new VBox(4);
@@ -191,9 +206,7 @@ public class DeviceManagerView extends ScrollPane {
         infoBox.getChildren().addAll(nameRow, netMeta, summaryRow);
 
         // Nút Theo dõi chi tiết các trang web truy cập
-        Button btnTrack = new Button("👁️ Theo dõi");
-        btnTrack.getStyleClass().add("btn-outline");
-        btnTrack.setStyle("-fx-font-size: 12px; -fx-padding: 8 14; -fx-text-fill: #2563EB; -fx-border-color: #93C5FD; -fx-cursor: hand; -fx-font-weight: 600;");
+        Button btnTrack = new Button("Theo dõi", new FontIcon(MaterialDesignE.EYE));
         btnTrack.setTooltip(new Tooltip("Theo dõi lịch sử truy cập web và trạng thái an toàn của " + device.getName()));
         btnTrack.setOnAction(e -> {
             DeviceTrackingDialog dialog = new DeviceTrackingDialog(device, dataService, toastNotifier);
@@ -208,13 +221,16 @@ public class DeviceManagerView extends ScrollPane {
         btnToggleBlock.setOnAction(e -> {
             dataService.toggleDeviceBlock(device);
             updateBlockButton(btnToggleBlock, device.isBlocked());
-            toastNotifier.accept((device.isBlocked() ? "Đã ngắt mạng internet của " : "Đã mở lại mạng cho ") + device.getName());
+            toastHandler.show(
+                    device.isBlocked() ? "Đã khóa mạng thiết bị" : "Đã mở khóa mạng",
+                    (device.isBlocked() ? "Đã ngắt mạng Internet của " : "Đã mở lại mạng cho ") + device.getName(),
+                    device.isBlocked() ? ToastManager.ToastType.WARNING : ToastManager.ToastType.SUCCESS
+            );
         });
 
         // Nút xóa thiết bị
-        Button btnDelete = new Button("🗑️");
-        btnDelete.getStyleClass().add("btn-outline");
-        btnDelete.setStyle("-fx-font-size: 13px; -fx-padding: 8 12; -fx-text-fill: #EF4444; -fx-border-color: #EF4444; -fx-cursor: hand;");
+        Button btnDelete = new Button("", new FontIcon(MaterialDesignD.DELETE_OUTLINE));
+        btnDelete.getStyleClass().add("danger");
         btnDelete.setTooltip(new Tooltip("Xóa thiết bị khỏi hệ thống"));
         btnDelete.setOnAction(e -> {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Bạn có chắc muốn xóa thiết bị \"" + device.getName() + "\" không?", ButtonType.YES, ButtonType.NO);
@@ -224,7 +240,7 @@ public class DeviceManagerView extends ScrollPane {
                 if (type == ButtonType.YES) {
                     dataService.removeDevice(device);
                     refreshDevicesList();
-                    toastNotifier.accept("Đã xóa thiết bị: " + device.getName());
+                    toastHandler.show("Đã xóa thiết bị", "Đã xóa " + device.getName() + " khỏi hệ thống.", ToastManager.ToastType.WARNING);
                 }
             });
         });
@@ -232,37 +248,31 @@ public class DeviceManagerView extends ScrollPane {
         HBox actionsBox = new HBox(8, btnTrack, btnToggleBlock, btnDelete);
         actionsBox.setAlignment(Pos.CENTER_RIGHT);
 
-        card.getChildren().addAll(lblIcon, infoBox, actionsBox);
+        card.getChildren().addAll(iconBox, infoBox, actionsBox);
         return card;
     }
 
     private void updateBlockButton(Button btn, boolean isBlocked) {
-        btn.getStyleClass().removeAll("btn-danger", "btn-sm-success", "btn-sm-danger", "btn-warning");
+        btn.getStyleClass().removeAll("danger", "success");
         if (isBlocked) {
-            btn.setText("🔓 Mở mạng Internet");
-            btn.getStyleClass().add("btn-sm-success");
-            btn.setStyle("-fx-font-size: 12px; -fx-padding: 8 16;");
+            btn.setText("Mở mạng Internet");
+            btn.setGraphic(new FontIcon(MaterialDesignS.SHIELD_CHECK));
+            btn.getStyleClass().add("success");
         } else {
-            btn.setText("🚫 Ngắt kết nối Internet");
-            btn.getStyleClass().add("btn-sm-danger");
-            btn.setStyle("-fx-font-size: 12px; -fx-padding: 8 16;");
+            btn.setText("Ngắt Internet");
+            btn.setGraphic(new FontIcon(MaterialDesignS.SHIELD_OFF));
+            btn.getStyleClass().add("danger");
         }
     }
 
-    private String getDeviceIcon(String type) {
-        if (type == null) return "💻";
-        switch (type.toLowerCase()) {
-            case "điện thoại":
-                return "📱";
-            case "máy tính bảng":
-                return "📟";
-            case "máy tính để bàn":
-                return "🖥️";
-            case "laptop":
-                return "💻";
-            default:
-                return "🌐";
-        }
+    private Ikon getDeviceIkon(String type) {
+        if (type == null) return MaterialDesignL.LAPTOP;
+        return switch (type.toLowerCase()) {
+            case "điện thoại" -> MaterialDesignC.CELLPHONE;
+            case "máy tính bảng" -> MaterialDesignT.TABLET;
+            case "máy tính để bàn" -> MaterialDesignD.DESKTOP_CLASSIC;
+            default -> MaterialDesignL.LAPTOP;
+        };
     }
 
     private void showAddDeviceDialog() {
@@ -333,13 +343,11 @@ public class DeviceManagerView extends ScrollPane {
     private void showAutoWireGuardDialog() {
         VpsClientService vps = dataService.getVpsClient() != null ? dataService.getVpsClient() : VpsClientService.getInstance();
         if (vps == null || vps.getConnectionState() != VpsClientService.ConnectionState.AUTHENTICATED) {
-            Alert alert = new Alert(Alert.AlertType.WARNING,
-                    "Ứng dụng chưa kết nối tới máy chủ VPS (103.74.101.176:9000).\n" +
-                    "Vui lòng đảm bảo dịch vụ FamilyGuard trên VPS đang hoạt động trước khi yêu cầu cấp cấu hình WireGuard.",
-                    ButtonType.OK);
-            alert.setTitle("Chưa kết nối VPS");
-            alert.setHeaderText("Cần kết nối VPS để tự động sinh khóa & cấp IP");
-            alert.showAndWait();
+            toastHandler.show(
+                    "Chưa kết nối VPS",
+                    "Ứng dụng chưa kết nối tới máy chủ VPS (103.74.101.176:9000) để cấp WireGuard.",
+                    ToastManager.ToastType.WARNING
+            );
             return;
         }
 
@@ -430,13 +438,14 @@ public class DeviceManagerView extends ScrollPane {
                 dataService.addDevice(newDev);
                 refreshDevicesList();
             }
-            toastNotifier.accept("Đã cấp cấu hình WireGuard thành công cho " + result.deviceName);
+            toastHandler.show("WireGuard thành công", "Đã cấp cấu hình WireGuard cho " + result.deviceName, ToastManager.ToastType.SUCCESS);
             showWireGuardSuccessDialog(result);
         } else {
-            Alert alert = new Alert(Alert.AlertType.ERROR, "Lỗi từ VPS: " + (result.error != null ? result.error : "Không thể tạo cấu hình WireGuard"), ButtonType.OK);
-            alert.setTitle("Tạo cấu hình thất bại");
-            alert.setHeaderText(null);
-            alert.showAndWait();
+            toastHandler.show(
+                    "Tạo cấu hình thất bại",
+                    "Lỗi từ VPS: " + (result.error != null ? result.error : "Không thể tạo cấu hình WireGuard"),
+                    ToastManager.ToastType.DANGER
+            );
         }
     }
 

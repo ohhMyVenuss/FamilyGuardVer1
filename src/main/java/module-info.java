@@ -3,6 +3,10 @@ module org.example.desktopver1 {
     requires javafx.fxml;
     requires java.sql;
     requires com.google.gson;
+    requires atlantafx.base;
+    requires org.kordamp.ikonli.core;
+    requires org.kordamp.ikonli.javafx;
+    requires org.kordamp.ikonli.materialdesign2;
 
     opens org.example.desktopver1 to javafx.fxml;
     opens org.example.desktopver1.controller to javafx.fxml;
