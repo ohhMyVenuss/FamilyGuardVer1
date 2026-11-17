@@ -1,5 +1,6 @@
 package org.example.desktopver1;
 
+import atlantafx.base.theme.PrimerLight;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
@@ -26,6 +27,9 @@ public class ParentalControlApp extends Application {
 
     @Override
     public void start(Stage primaryStage) {
+        // Áp dụng theme hiện đại AtlantaFX PrimerLight
+        Application.setUserAgentStylesheet(new PrimerLight().getUserAgentStylesheet());
+
         // Khởi động luồng ngầm duy trì kết nối tới VPS (103.74.101.176:9000)
         VpsClientService.getInstance().start();
 
@@ -35,8 +39,8 @@ public class ParentalControlApp extends Application {
         // Tạo Scene chính
         Scene scene = new Scene(mainController.getRoot(), DEFAULT_WIDTH, DEFAULT_HEIGHT);
 
-        // Nạp stylesheet giao diện hiện đại
-        URL cssResource = getClass().getResource("/org/example/desktopver1/css/style.css");
+        // Nạp stylesheet tùy chỉnh
+        URL cssResource = getClass().getResource("/styles/style.css");
         if (cssResource != null) {
             scene.getStylesheets().add(cssResource.toExternalForm());
         }

@@ -1,5 +1,6 @@
 package org.example.desktopver1.view;
 
+import javafx.application.Platform;
 import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -8,6 +9,9 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import org.example.desktopver1.model.AccessLog;
 import org.example.desktopver1.service.DataService;
+import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignD;
+import org.kordamp.ikonli.materialdesign2.MaterialDesignR;
 
 import java.util.function.Consumer;
 
@@ -20,7 +24,7 @@ import java.util.function.Consumer;
 public class AccessLogsView extends VBox {
 
     private final DataService dataService;
-    private final Consumer<String> toastNotifier;
+    private final ToastManager.ToastHandler toastHandler;
 
     private TableView<AccessLog> tableView;
     private FilteredList<AccessLog> filteredData;
@@ -28,9 +32,9 @@ public class AccessLogsView extends VBox {
     private ComboBox<String> filterCombo;
     private Label footerStatsLabel;
 
-    public AccessLogsView(DataService dataService, Consumer<String> toastNotifier) {
+    public AccessLogsView(DataService dataService, Consumer<String> legacyToast, ToastManager.ToastHandler toastHandler) {
         this.dataService = dataService;
-        this.toastNotifier = toastNotifier;
+        this.toastHandler = toastHandler;
 
         getStyleClass().add("view-container");
         setSpacing(18);
@@ -38,15 +42,19 @@ public class AccessLogsView extends VBox {
         // 1. Tiêu đề
         getChildren().add(createHeader());
 
-        // 2. Thanh công cụ tìm kiếm & bộ lọc
-        getChildren().add(createToolbar());
+        // 2. Card chứa thanh công cụ + bảng TableView
+        VBox tableCard = new VBox(14);
+        tableCard.getStyleClass().add("fg-card");
+        VBox.setVgrow(tableCard, Priority.ALWAYS);
 
-        // 3. Bảng TableView
+        tableCard.getChildren().add(createToolbar());
         tableView = createTableView();
         VBox.setVgrow(tableView, Priority.ALWAYS);
-        getChildren().add(tableView);
+        tableCard.getChildren().add(tableView);
 
-        // 4. Thanh trạng thái phía dưới
+        getChildren().add(tableCard);
+
+        // 3. Thanh trạng thái phía dưới
         getChildren().add(createFooter());
 
         setupFiltering();
@@ -54,10 +62,10 @@ public class AccessLogsView extends VBox {
 
     private VBox createHeader() {
         VBox box = new VBox(4);
-        Label title = new Label("Nhật Ký Truy Cập & Giám Sát An Toàn");
-        title.getStyleClass().add("header-welcome");
-        Label sub = new Label("Ghi lại chi tiết mọi truy vấn mạng, tên miền và kết quả kiểm duyệt từ thiết bị của trẻ.");
-        sub.getStyleClass().add("header-subtitle");
+        Label title = new Label("Nhật ký truy cập (Live Logs)");
+        title.getStyleClass().add("page-title");
+        Label sub = new Label("Theo dõi thời gian thực mọi truy vấn mạng, tên miền và cảnh báo bị chặn từ VPS.");
+        sub.getStyleClass().add("page-subtitle");
         box.getChildren().addAll(title, sub);
         return box;
     }
@@ -67,7 +75,7 @@ public class AccessLogsView extends VBox {
         bar.setAlignment(Pos.CENTER_LEFT);
 
         searchField = new TextField();
-        searchField.setPromptText("🔍 Tìm theo tên miền, thiết bị, lý do...");
+        searchField.setPromptText("Tìm theo tên miền, thiết bị, lý do...");
         searchField.setPrefWidth(280);
 
         filterCombo = new ComboBox<>();
@@ -77,20 +85,18 @@ public class AccessLogsView extends VBox {
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
 
-        Button btnRefresh = new Button("🔄 Làm mới");
-        btnRefresh.getStyleClass().add("btn-outline");
+        Button btnRefresh = new Button("Làm mới", new FontIcon(MaterialDesignR.REFRESH));
         btnRefresh.setOnAction(e -> {
             tableView.refresh();
             updateFooterStats();
-            toastNotifier.accept("Đã làm mới dữ liệu nhật ký mạng.");
+            toastHandler.show("Đã làm mới", "Dữ liệu nhật ký truy cập đã được cập nhật.", ToastManager.ToastType.SUCCESS);
         });
 
-        Button btnExport = new Button("📥 Xuất báo cáo CSV");
-        btnExport.getStyleClass().add("btn-outline");
-        btnExport.setOnAction(e -> toastNotifier.accept("Đã xuất báo cáo truy cập an toàn ra file family_access_report.csv"));
+        Button btnExport = new Button("Xuất CSV", new FontIcon(MaterialDesignD.DOWNLOAD));
+        btnExport.setOnAction(e -> toastHandler.show("Xuất báo cáo", "Đã xuất báo cáo truy cập ra file family_access_report.csv", ToastManager.ToastType.SUCCESS));
 
-        Button btnClear = new Button("🗑️ Xóa log");
-        btnClear.getStyleClass().add("btn-sm-danger");
+        Button btnClear = new Button("Xóa log", new FontIcon(MaterialDesignD.DELETE_OUTLINE));
+        btnClear.getStyleClass().add("danger");
         btnClear.setOnAction(e -> {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Bạn có chắc chắn muốn xóa toàn bộ lịch sử truy cập?", ButtonType.YES, ButtonType.NO);
             alert.setHeaderText("Xác nhận xóa nhật ký");
@@ -98,7 +104,7 @@ public class AccessLogsView extends VBox {
                 if (response == ButtonType.YES) {
                     dataService.clearLogs();
                     updateFooterStats();
-                    toastNotifier.accept("Đã dọn dẹp toàn bộ dữ liệu nhật ký.");
+                    toastHandler.show("Đã dọn dẹp", "Toàn bộ dữ liệu nhật ký đã được xóa.", ToastManager.ToastType.WARNING);
                 }
             });
         });
@@ -148,7 +154,7 @@ public class AccessLogsView extends VBox {
                 } else {
                     badge.setText(item);
                     badge.getStyleClass().clear();
-                    badge.getStyleClass().add("badge");
+                    badge.getStyleClass().add("status-badge");
                     if ("ĐÃ CHẶN".equalsIgnoreCase(item)) {
                         badge.getStyleClass().add("badge-danger");
                     } else {
@@ -223,11 +229,11 @@ public class AccessLogsView extends VBox {
     private HBox createFooter() {
         HBox footer = new HBox();
         footer.setAlignment(Pos.CENTER_LEFT);
-        footer.setPadding(new Insets(6, 12, 6, 12));
-        footer.setStyle("-fx-background-color: #FFFFFF; -fx-background-radius: 8px; -fx-border-color: #E2E8F0; -fx-border-radius: 8px;");
+        footer.setPadding(new Insets(10, 14, 10, 14));
+        footer.getStyleClass().add("fg-card");
 
         footerStatsLabel = new Label();
-        footerStatsLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #64748B;");
+        footerStatsLabel.getStyleClass().add("card-subtitle");
 
         footer.getChildren().add(footerStatsLabel);
         return footer;
